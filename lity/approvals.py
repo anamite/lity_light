@@ -10,7 +10,13 @@ an approval card appears in the UI (SSE), and the tool waits for the decision.
 import asyncio
 import json
 
+from . import voice
 from .db import dumps
+
+# what the dashboard/API may send; Hermes-bridged cards additionally accept
+# the raw Hermes choice words (once/session) offered in the approval event
+DECISION_STATUS = {"approve": "approved", "once": "approved", "session": "approved",
+                   "always": "always", "deny": "denied"}
 
 
 class Approvals:
@@ -18,6 +24,10 @@ class Approvals:
         self.app = app
         self._waiters: dict[int, asyncio.Event] = {}
         self._always: set[str] = set()
+        # thread_id -> {"approval_id", "choices"}: armed by the
+        # offer_approval_options tool; the NEXT user message in that thread
+        # is checked for a 1:1 option match (voice-safe deterministic path)
+        self._armed: dict[int, dict] = {}
 
     async def load(self):
         rows = await self.app.db.fetchall("SELECT DISTINCT tool FROM approvals WHERE status='always'")
@@ -92,20 +102,23 @@ class Approvals:
             f"#{ctx.thread_id}) — the task stays paused and will stop if the approval expires.")
 
     async def resolve(self, approval_id: int, decision: str) -> bool:
-        if decision not in ("approve", "always", "deny"):
+        decision = str(decision).strip().lower()
+        if decision not in DECISION_STATUS:
             return False
-        status = {"approve": "approved", "always": "always", "deny": "denied"}[decision]
+        status = DECISION_STATUS[decision]
         row = await self.app.db.fetchone("SELECT * FROM approvals WHERE id=? AND status='pending'",
                                          (approval_id,))
         if not row:
             return False
+        if decision in ("once", "session") and not row["run_id"]:
+            return False  # Hermes vocabulary only applies to bridged cards
         await self.app.db.execute(
             "UPDATE approvals SET status=?, decided_at=datetime('now') WHERE id=?",
             (status, approval_id))
         if row["run_id"]:
             # bridged from a Hermes run: forward the decision to the gateway
             # instead of waking a local waiter (there is none)
-            return await self._resolve_hermes(row, status, approval_id)
+            return await self._resolve_hermes(row, decision, status, approval_id)
         if status == "always":
             self._always.add(row["tool"])
         ev = self._waiters.get(approval_id)
@@ -114,14 +127,15 @@ class Approvals:
         self.app.bus.emit("approval.resolved", id=approval_id, status=status)
         return True
 
-    async def _resolve_hermes(self, row, status: str, approval_id: int) -> bool:
-        decision = "approve" if status in ("approved", "always") else "deny"
+    async def _resolve_hermes(self, row, decision: str, status: str, approval_id: int) -> bool:
         try:
             args = json.loads(row["args_json"])
         except (json.JSONDecodeError, TypeError):
             args = {}
         runner = self.app.runner
         try:
+            # raw choice goes through: Hermes accepts once|session|always|deny
+            # and aliases approve → once server-side
             await runner.hermes.resolve_approval(
                 row["run_id"], args.get("_hermes_approval_id"), decision)
         except Exception:
@@ -131,7 +145,7 @@ class Approvals:
         task = await self.app.db.fetchone("SELECT * FROM tasks WHERE id=?", (row["task_id"],))
         if not task:
             return True
-        if decision == "approve":
+        if status != "denied":
             await self.app.db.execute(
                 "UPDATE tasks SET status='running' WHERE id=? AND status='waiting_user'",
                 (task["id"],))
@@ -142,3 +156,31 @@ class Approvals:
                 row["run_id"], task["agent"], task["id"], task["parent_thread_id"],
                 f"`{row['tool']}` — user denied the request")
         return True
+
+    # ── voice-safe deterministic decision path ───────────────────────────
+    def arm_options(self, thread_id: int, approval_id: int, choices: list[str]):
+        """Called by offer_approval_options: the next user message in this
+        thread is checked for an exact option match before any LLM sees it."""
+        self._armed[thread_id] = {"approval_id": approval_id, "choices": choices}
+
+    async def try_option_match(self, thread_id: int, text: str) -> str | None:
+        """If this thread is armed and the message matches an option 1:1,
+        execute the decision and return the fixed confirmation text (the LLM
+        is bypassed entirely). Any other message disarms and returns None."""
+        armed = self._armed.pop(thread_id, None)
+        if not armed:
+            return None
+        choice = voice.match_choice(text, armed["choices"])
+        if not choice:
+            return None  # free-form → back to the LLM, which may re-arm
+        row = await self.app.db.fetchone(
+            "SELECT * FROM approvals WHERE id=?", (armed["approval_id"],))
+        if not row or row["status"] != "pending":
+            return voice.APPROVAL_GONE
+        ok = await self.resolve(row["id"], choice)
+        if not ok:
+            return voice.APPROVAL_GONE
+        task = await self.app.db.fetchone(
+            "SELECT task FROM tasks WHERE id=?", (row["task_id"],))
+        title = (task["task"][:60] if task else f"#{row['task_id']}")
+        return voice.APPROVAL_CONFIRM.format(choice=choice, title=title)

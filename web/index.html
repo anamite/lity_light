@@ -131,7 +131,6 @@
     <div id="tabs">
       <button data-pane="config" class="on">Config</button>
       <button data-pane="files">Identity files</button>
-      <button data-pane="agents">Sub-agents</button>
       <button data-pane="skills">Skills</button>
       <button data-pane="tools">Tools</button>
     </div>
@@ -142,7 +141,6 @@
       <button class="savebtn" onclick="saveConfig()">Save config</button>
     </div>
     <div class="pane" id="pane-files"></div>
-    <div class="pane" id="pane-agents"></div>
     <div class="pane" id="pane-skills"></div>
     <div class="pane" id="pane-tools"></div>
   </div>
@@ -346,33 +344,11 @@ $('#gear').onclick = async () => {
     fp.appendChild(ta); fp.appendChild(b);
   }
 
-  const ap = $('#pane-agents'); ap.innerHTML =
-    '<p class="hint">Each sub-agent = one YAML (model, tools, budgets, level_cap) + one system prompt. '+
-    'Saving reloads the registry instantly. To add an agent, edit the name in any YAML and save.</p>';
-  for(const a of s.agents){
-    ap.insertAdjacentHTML('beforeend', `<h3>${a.name}</h3>`);
-    const ty = document.createElement('textarea');
-    ty.className='ed small'; ty.value=a.yaml; ty.spellcheck=false;
-    const tp = document.createElement('textarea');
-    tp.className='ed small'; tp.value=a.prompt; tp.spellcheck=false;
-    tp.placeholder='system prompt';
-    const b = document.createElement('button'); b.className='savebtn'; b.textContent='Save '+a.name;
-    b.onclick = async () => {
-      try{
-        let nm = a.name;
-        try{ const parsed = ty.value.match(/^name:\s*(\S+)/m); if(parsed) nm = parsed[1]; }catch(e){}
-        await api('/settings/agent', {_method:'PUT', name: nm, yaml: ty.value, prompt: tp.value});
-        toast('agent '+nm+' saved');
-      }catch(e){ toast(e.message, true); }
-    };
-    ap.appendChild(ty); ap.appendChild(tp); ap.appendChild(b);
-  }
-
   const skills = await api('/skills');
   $('#pane-skills').innerHTML =
-    '<p class="hint">Skills the agents distilled from completed tasks. Injected automatically '+
-    'when a similar task starts; refined in place when repeated. Delete anything wrong or stale.</p>'+
-    (skills.length ? '' : '<p class="hint">(no skills learned yet — they appear after sub-agent tasks complete)</p>');
+    '<p class="hint">Lessons distilled from completed Hermes tasks; refined in place when '+
+    'repeated. Delete anything wrong or stale.</p>'+
+    (skills.length ? '' : '<p class="hint">(no skills learned yet — they appear after delegated tasks complete)</p>');
   for(const sk of skills){
     const d = document.createElement('div'); d.className='approval'; d.style.borderColor='var(--line)';
     d.style.alignSelf='stretch'; d.style.maxWidth='100%'; d.style.marginBottom='10px';

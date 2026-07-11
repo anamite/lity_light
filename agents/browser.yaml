@@ -1,8 +1,0 @@
-name: browser
-description: Drives a real Chromium browser; use for interactive web tasks — forms, logins, navigation, anything a page must be clicked for.
-# model: (unset — uses models.default_agent from config.yaml; set to override)
-prompt: prompts/browser.md
-tools: [browser_goto, browser_snapshot, browser_click, browser_type, browser_screenshot, write_file, send_file, analyze_image]
-max_turns: 30
-max_tokens_total: 250000
-level_cap: 3

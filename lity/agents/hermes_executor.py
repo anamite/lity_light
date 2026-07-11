@@ -84,11 +84,13 @@ class HermesClient:
             await c.post(f"{self.base}/v1/runs/{run_id}/stop", headers=self._headers())
 
     async def resolve_approval(self, run_id: str, approval_id, decision: str):
-        """decision: 'approve' | 'deny'"""
+        """Verified against api_server.py: body is {"choice": ...} with allowed
+        values once|session|always|deny (server aliases approve/allow → once).
+        One pending approval per run — addressed by run_id, approval_id unused."""
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(f"{self.base}/v1/runs/{run_id}/approval",
                              headers=self._headers(),
-                             json={"approval_id": approval_id, "decision": decision})
+                             json={"choice": decision})
             r.raise_for_status()
 
 
@@ -110,11 +112,18 @@ def classify(evt: dict) -> tuple[str, dict]:
     is 'approval' | 'final' | 'error' | 'progress' | 'other'."""
     t = str(evt.get("type") or evt.get("event") or "").lower()
     status = str(evt.get("status") or "").lower()
-    if "approval" in t or status in ("requires_approval", "awaiting_approval"):
+    if "approval" in t or status in ("requires_approval", "awaiting_approval",
+                                     "waiting_for_approval"):
+        args = evt.get("arguments") or evt.get("args") or {}
+        if evt.get("command") and isinstance(args, dict) and "command" not in args:
+            args = {**args, "command": evt["command"]}  # pre-redacted by Hermes
         return "approval", {
             "approval_id": evt.get("approval_id") or evt.get("id"),
-            "tool": str(evt.get("tool") or evt.get("name") or "hermes_action"),
-            "args": evt.get("arguments") or evt.get("args") or {},
+            "tool": str(evt.get("tool") or evt.get("tool_name") or evt.get("name")
+                        or "hermes_action"),
+            "args": args,
+            "choices": [str(c) for c in (evt.get("choices") or [])
+                        ] or ["once", "session", "always", "deny"],
         }
     if t.endswith((".completed", ".done")) or t in ("completed", "done") or status == "completed":
         return "final", {"output": extract_output(evt), "usage": evt.get("usage") or {}}

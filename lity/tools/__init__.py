@@ -68,20 +68,7 @@ def openai_schema(names: list[str]) -> list[dict]:
 
 def load_all():
     """Import all tool modules so their @tool decorators register."""
-    from . import core, exec_tools, web, browser, vision  # noqa: F401
-
-
-def expand_tools(names: list[str]) -> list[str]:
-    """Expand 'mcp:<server>' / 'mcp:*' entries in an agent's tools list into
-    the tool names the connected MCP servers actually registered."""
-    out: list[str] = []
-    for n in names:
-        if n.startswith("mcp:"):
-            from . import mcp
-            out.extend(mcp.tools_for(n[4:]))
-        else:
-            out.append(n)
-    return out
+    from . import core  # noqa: F401
 
 
 async def run_tool(ctx: ToolContext, name: str, args: dict) -> str:

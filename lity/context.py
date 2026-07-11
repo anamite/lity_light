@@ -6,22 +6,35 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-DELEGATION_POLICY = """## Delegation policy
-You are the lightweight front desk. Delegate anything heavy with `delegate`:
-code/data work → coder · deep web research → researcher · interactive web
-pages → browser · installs/system work → shell · long documents → writer.
+DELEGATION_POLICY = """## Delegation policy — Hermes does the work
+You are the lightweight front desk. Hermes is your single executor: a full
+agent with terminal, files, coding, web browsing/research, email, calendar
+and every external service. Anything beyond your own small tools — running
+code, touching files, browsing, installing, researching, sending email,
+checking calendars, connecting new services — goes to Hermes via
+`delegate(task)`. Do it AUTOMATICALLY: the user never has to say "use
+Hermes" or name an executor; that routing is your job. Write the task
+complete and self-contained (Hermes has none of this conversation).
 Delegated tasks run in parallel; a system event delivers each result — relay
-it to the user conversationally, ONCE. The '## Task board' block (when shown)
-is the live state of every open task; use task_log(task_id) to peek inside a
-task's thread when the user asks what it is doing. If a system event needs no user-facing
-reply (internal, duplicate, or something you already reported), output exactly
-NO_REPLY and nothing else. Use quick_search only for one-shot lookups.
-Keep replies short. Never do a sub-agent's job yourself.
-External services (calendar, email, drive...) not connected yet? You can
-connect them YOURSELF: call `capabilities` for the exact recipe, walk the
-user through it, then connect_service — never just say it's unavailable.
-Unsure whether you can do something (schedules, file ops, agents, tools)?
-Call `capabilities` FIRST — never refuse or invent limits from assumption."""
+it to the user conversationally, ONCE. The '## Task board' block (when
+shown) is the live state of every open task; use task_log(task_id) to peek
+inside a task's thread when the user asks what it is doing. If a system
+event needs no user-facing reply (internal, duplicate, or something you
+already reported), output exactly NO_REPLY and nothing else. Use
+quick_search only for one-shot lookups. Keep replies short. Never grind
+through heavy work yourself, and never refuse: unsure whether something is
+possible? Call `capabilities` FIRST, and when in doubt delegate to Hermes
+and let it try.
+Style: your replies may be READ ALOUD by a voice assistant. Plain speakable
+sentences only — no markdown, no emojis, no tables, no bullet lists, no
+code blocks. Simple punctuation.
+Approvals: pending approvals appear on the task board with their id; a
+fixed announcement was already sent when one arrived. If the user wants
+details, use task_log on that task and explain in your own words. When the
+user is ready to decide, call offer_approval_options(approval_id) — you can
+NEVER approve or deny anything yourself, and you never invent option words;
+only that tool's exact options, spoken back by the user, execute a decision.
+If their answer isn't an exact option, keep conversing and offer again."""
 
 
 def _read(path: Path, cap: int) -> str:
@@ -43,9 +56,6 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
         soul = f"{soul}\n\n{learned}"
     user_md = _read(ws / "USER.md", slot)
 
-    agent_lines = "\n".join(f"- {a.name}: {a.description}" for a in app.agents.all())
-    agents_block = f"## Sub-agents available\n{agent_lines}"[:slot]
-
     mems = await app.memory.recall(user_text, k=int(app.cfg.get_path("kernel.memory_inject_top_k", 5)))
     mem_block = ""
     if mems:
@@ -56,17 +66,9 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
     summary_row = await app.db.fetchone("SELECT content FROM summaries WHERE thread_id=?", (thread_id,))
     summary_block = f"## Earlier in this thread (summary)\n{summary_row['content'][:slot]}" if summary_row else ""
 
-    # routing lessons learned from past delegations (skills stored under agent='kernel')
-    hints = await app.skills.recall("kernel", user_text, k=2)
-    hints_block = ""
-    if hints:
-        hints_block = ("## Learned routing hints\n" + "\n".join(
-            f"- {h['name']}: {h['content']}" for h in hints))[:slot // 2]
-
     tasks_block = await _task_board(app, slot)
 
-    parts = [soul, user_md, agents_block, DELEGATION_POLICY, tasks_block,
-             hints_block, mem_block, summary_block]
+    parts = [soul, user_md, DELEGATION_POLICY, tasks_block, mem_block, summary_block]
     return "\n\n".join(p for p in parts if p)
 
 
@@ -91,10 +93,14 @@ async def _task_board(app, slot: int) -> str:
         "WHERE status IN ('queued','running','waiting_user') "
         "   OR (finished_at IS NOT NULL AND finished_at >= datetime('now','-15 minutes')) "
         "ORDER BY id DESC LIMIT 8")
-    if not rows:
+    approvals = await app.db.fetchall(
+        "SELECT id, tool, task_id FROM approvals WHERE status='pending' ORDER BY id DESC LIMIT 4")
+    if not rows and not approvals:
         return ""
     lines = [f"#{r['id']} {r['agent']} · {r['status']} · "
              f"{r['task'][:60]} · {_age(r['created_at'])} ago" for r in rows]
+    lines += [f"approval #{a['id']} PENDING (tool {a['tool']}, task #{a['task_id']}) "
+              f"— decide via offer_approval_options({a['id']})" for a in approvals]
     return ("## Task board (waiting_user = needs the user's approval NOW)\n"
             + "\n".join(lines))[:slot]
 

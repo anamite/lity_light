@@ -6,7 +6,7 @@ from . import params, tool
 KERNEL_TOOLS = [
     "recall", "remember", "delegate", "task_status", "task_log", "cancel_task",
     "schedule", "list_schedules", "quick_search", "search_history",
-    "update_user_profile", "send_file", "capabilities", "connect_service",
+    "update_user_profile", "send_file", "capabilities", "offer_approval_options",
 ]
 
 
@@ -29,20 +29,20 @@ async def remember(ctx, args):
 
 
 @tool("delegate",
-      "Hand a task to a specialist sub-agent. It runs in parallel in its own thread; "
-      "you'll get a system event with the result. Available agents are listed in your system prompt.",
-      params({"agent": {"type": "string", "description": "agent name from the registry"},
-              "task": {"type": "string", "description": "complete, self-contained task description"},
-              "context": {"type": "string", "description": "optional extra context the agent needs"}},
-             required=["agent", "task"]), level=2)
+      "Hand a task to Hermes, your executor: a full agent with terminal, browser, files, "
+      "coding, web research, email/calendar and more. ANY real-world work beyond your own "
+      "small tools goes here — never refuse or attempt it yourself. Runs in parallel in its "
+      "own thread; a system event delivers the result.",
+      params({"task": {"type": "string", "description": "complete, self-contained task description"},
+              "context": {"type": "string", "description": "optional extra context Hermes needs"}},
+             required=["task"]), level=2)
 async def delegate(ctx, args):
-    try:
-        task_id, thread_id = await ctx.app.runner.spawn(
-            args["agent"], args["task"], ctx.thread_id, args.get("context", ""))
-    except KeyError:
-        names = ", ".join(ctx.app.agents.names())
-        return f"Unknown agent '{args['agent']}'. Available: {names}"
-    return f"Task #{task_id} started ({args['agent']}, sub-thread {thread_id}). You'll be notified when it finishes."
+    if not ctx.app.runner.hermes.enabled:
+        return ("Hermes executor is not configured (hermes.enabled=false in config.yaml). "
+                "Tell the user to point hermes.base_url at their Hermes gateway and enable it.")
+    task_id, thread_id = await ctx.app.runner.spawn(
+        args["task"], ctx.thread_id, args.get("context", ""))
+    return f"Task #{task_id} started (hermes, sub-thread {thread_id}). You'll be notified when it finishes."
 
 
 @tool("task_status", "Check the status/result of a delegated task.",
@@ -138,7 +138,7 @@ async def list_schedules(ctx, args):
 
 
 @tool("quick_search",
-      "One-shot web search returning top-3 snippets. For anything deeper, delegate to the researcher.",
+      "One-shot web search returning top-3 snippets. For anything deeper, delegate to Hermes.",
       params({"query": {"type": "string"}}), level=1, direct=True)
 async def quick_search(ctx, args):
     from .web import ddg_search
@@ -158,48 +158,38 @@ async def update_user_profile(ctx, args):
 
 
 @tool("capabilities",
-      "Your live capability sheet: connected external services + setup recipes to connect new "
-      "ones (calendar/email), kernel tools, sub-agents, schedule formats, learned skills. "
-      "Check this BEFORE telling the user something is impossible or unavailable. "
+      "Your live capability sheet: the Hermes executor's status and what it can do, your own "
+      "kernel tools, schedule formats, learned skills. Check this BEFORE telling the user "
+      "something is impossible or unavailable. "
       "INTERNAL reference — read it, then answer the user in your own words.",
       params({}, required=[]), level=0)
 async def capabilities(ctx, args):
     from . import REGISTRY
-    from .mcp import MCP_TOOLS
-    # external services FIRST: when the user asks about calendar/email/etc.,
-    # the connection status and setup recipe are what must never be overlooked
     lines = ["# What I can do", ""]
-    if MCP_TOOLS:
-        lines.append("## Connected external services (MCP — usable by sub-agents)")
-        for srv, tnames in MCP_TOOLS.items():
-            short = ", ".join(t.removeprefix(f"{srv}_") for t in tnames)
-            lines.append(f"- {srv}: {short[:250]}")
+    hermes = ctx.app.runner.hermes
+    if hermes.enabled:
+        lines.append(
+            "## Hermes executor: CONNECTED — this is how ALL real work gets done\n"
+            f"- gateway: {hermes.base}\n"
+            "- Hermes is a full agent: terminal/shell, file operations, coding, web browsing "
+            "and research, and any external services connected on the Hermes side "
+            "(email, calendar, MCP servers...).\n"
+            "- Use delegate(task) for ANYTHING beyond the kernel tools below. If unsure "
+            "whether Hermes can do it, delegate anyway and let it try — never refuse first.\n"
+            "- Setting up a new external service (e.g. Google Calendar)? That also happens "
+            "on the Hermes side — delegate the setup itself as a task.")
     else:
         lines.append(
-            "## External services (calendar/email/drive): NONE connected — SET ONE UP NOW\n"
-            "You CAN connect them yourself with connect_service — do NOT refuse, and do NOT "
-            "delegate to the secretary before connecting. Google recipe (Calendar + Gmail + "
-            "Drive via the 'workspace-mcp' server):\n"
-            "1. Send the user these steps (the ONLY part they must do themselves): "
-            "console.cloud.google.com → create/pick a project → 'APIs & Services' → enable "
-            "the Google Calendar API and Gmail API → 'Credentials' → 'Create credentials' → "
-            "'OAuth client ID' → application type 'Desktop app' → copy the Client ID and "
-            "Client Secret, and paste both here in chat.\n"
-            "2. When they paste the credentials, IMMEDIATELY call: connect_service("
-            "name='google', command='uvx', args=['workspace-mcp'], "
-            "env={'GOOGLE_OAUTH_CLIENT_ID': '<id>', 'GOOGLE_OAUTH_CLIENT_SECRET': '<secret>'}). "
-            "If uvx is missing, delegate installing uv (astral.sh/uv) to the shell agent first.\n"
-            "3. Delegate the original task to the secretary; the first Google tool call opens "
-            "a one-time browser consent (if the task reports an auth URL instead, send that "
-            "URL to the user, then re-run the task).")
+            "## Hermes executor: NOT CONFIGURED\n"
+            "Without Hermes you can only chat, remember, search and schedule — no shell, "
+            "files, browsing or external services. Tell the user to set hermes.enabled=true "
+            "and hermes.base_url in Settings → config.yaml (their Hermes gateway must run "
+            "with API_SERVER_ENABLED=true, key in .env as HERMES_API_KEY).")
     lines.append("\n## Kernel tools (I use these directly)")
     for n in KERNEL_TOOLS:
         t = REGISTRY.get(n)
         if t:
             lines.append(f"- {t.name}: {t.description}")
-    lines.append("\n## Sub-agents (delegate — they run in parallel and report back)")
-    for a in ctx.app.agents.all():
-        lines.append(f"- {a.name}: {a.description}\n  tools: {', '.join(a.tools)}")
     from ..sched.crons import MIN_EVERY_SECONDS
     lines.append(
         "\n## Scheduling\n"
@@ -214,28 +204,31 @@ async def capabilities(ctx, args):
     return "\n".join(lines)
 
 
-@tool("connect_service",
-      "Connect an external service (MCP server) at runtime — e.g. Google Calendar/Gmail. "
-      "Call `capabilities` FIRST: it has the exact recipe and the OAuth steps to walk the user through.",
-      params({"name": {"type": "string", "description": "short service name, e.g. 'google'"},
-              "command": {"type": "string", "description": "executable, e.g. 'uvx' or 'npx'"},
-              "args": {"type": "array", "items": {"type": "string"}},
-              "env": {"type": "object", "description": "env vars, e.g. OAuth client id/secret",
-                      "additionalProperties": {"type": "string"}}},
-             required=["name", "command"]), level=3)
-async def connect_service(ctx, args):
-    spec = {"command": args["command"], "args": args.get("args") or [],
-            "env": args.get("env") or {}}
-    try:
-        tools = await ctx.app.mcp.add_server(args["name"].strip(), spec)
-    except Exception as e:
-        return (f"Could not connect '{args['name']}': {e}\n"
-                "Check the command exists (delegate to the shell agent to install it), "
-                "the args, and the credentials — then call connect_service again to retry.")
-    short = ", ".join(t.removeprefix(args["name"].strip() + "_") for t in tools)
-    return (f"Connected '{args['name']}' — {len(tools)} tools now available to sub-agents "
-            f"(secretary has mcp:*): {short[:500]}. Note: the first call to a Google tool "
-            "triggers a one-time browser consent; if a task reports an auth URL, pass it to the user.")
+@tool("offer_approval_options",
+      "Ask the user to DECIDE a pending approval (from the task board). Emits the fixed "
+      "decision question with the exact allowed options and arms 1:1 matching: if the user's "
+      "next message is exactly one of the options, the decision executes directly without you. "
+      "You NEVER approve or deny anything yourself — this tool is the only path to a decision. "
+      "Use it when the user says they are ready to decide; if they answer anything else, "
+      "converse normally and call it again when they're ready.",
+      params({"approval_id": {"type": "integer", "description": "pending approval id"}}),
+      level=0, direct=True)
+async def offer_approval_options(ctx, args):
+    import json as _json
+    from .. import voice
+    row = await ctx.app.db.fetchone(
+        "SELECT * FROM approvals WHERE id=? AND status='pending'", (args["approval_id"],))
+    if not row:
+        return "No pending approval with that id — check the task board."
+    choices = ["approve", "deny"]
+    if row["run_id"]:
+        try:
+            choices = _json.loads(row["args_json"]).get("_hermes_choices") or \
+                ["once", "session", "always", "deny"]
+        except (_json.JSONDecodeError, TypeError):
+            choices = ["once", "session", "always", "deny"]
+    ctx.app.approvals.arm_options(ctx.user_thread_id, row["id"], choices)
+    return voice.APPROVAL_OPTIONS.format(options=voice.options_sentence(choices))
 
 
 @tool("send_file",

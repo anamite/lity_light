@@ -4,19 +4,23 @@ is the default channel; Telegram/Discord/etc. can be added later as peers."""
 import asyncio
 import json
 import mimetypes
+import os
 import re
 import time
+import uuid
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from .. import voice
 from ..db import rows_to_dicts
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 EDITABLE_FILES = ["SOUL.md", "LEARNED.md", "USER.md", "HEARTBEAT.md", "AGENTS.md", "MEMORY.md"]
+VOICE_THREAD = 1  # Home — voice and dashboard share one conversation
 
 
 class MessageIn(BaseModel):
@@ -38,12 +42,6 @@ class ConfigIn(BaseModel):
 class FileIn(BaseModel):
     name: str
     content: str
-
-
-class AgentIn(BaseModel):
-    name: str
-    yaml: str
-    prompt: str
 
 
 def create_app(core) -> FastAPI:
@@ -118,21 +116,13 @@ def create_app(core) -> FastAPI:
     async def settings():
         from ..tools import REGISTRY
         ws = core.cfg.workspace
-        agents_dir = core.cfg.resolve("agents_dir", "./agents")
         files = {n: (ws / n).read_text(encoding="utf-8") if (ws / n).is_file() else ""
                  for n in EDITABLE_FILES}
-        agents = []
-        for yml in sorted(agents_dir.glob("*.yaml")):
-            data = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
-            prompt_file = agents_dir / data.get("prompt", f"prompts/{yml.stem}.md")
-            agents.append({"name": yml.stem, "yaml": yml.read_text(encoding="utf-8"),
-                           "prompt": prompt_file.read_text(encoding="utf-8")
-                           if prompt_file.is_file() else ""})
         tools = [{"name": t.name, "description": t.description, "level": t.level,
                   "direct_ok": t.direct_ok} for t in sorted(REGISTRY.values(),
                                                             key=lambda t: (t.level, t.name))]
         return {"config_yaml": (core.cfg.root / "config.yaml").read_text(encoding="utf-8"),
-                "files": files, "agents": agents, "tools": tools}
+                "files": files, "tools": tools}
 
     @api.put("/api/settings/config")
     async def save_config(body: ConfigIn):
@@ -144,7 +134,6 @@ def create_app(core) -> FastAPI:
         (core.cfg.root / "config.yaml").write_text(body.yaml, encoding="utf-8")
         core.cfg.clear()
         core.cfg.update(data)          # hot-reload; server settings need a restart
-        core.agents.load()             # default_agent model may have changed
         return {"status": "ok"}
 
     @api.put("/api/settings/file")
@@ -153,24 +142,6 @@ def create_app(core) -> FastAPI:
             raise HTTPException(400, f"editable files: {EDITABLE_FILES}")
         (core.cfg.workspace / body.name).write_text(body.content, encoding="utf-8")
         return {"status": "ok"}
-
-    @api.put("/api/settings/agent")
-    async def save_agent(body: AgentIn):
-        if not re.fullmatch(r"[a-z0-9_\-]+", body.name):
-            raise HTTPException(400, "agent name must be lowercase alphanumeric")
-        try:
-            data = yaml.safe_load(body.yaml)
-            assert isinstance(data, dict) and data.get("name")
-        except Exception as e:
-            raise HTTPException(400, f"invalid agent YAML: {e}")
-        agents_dir = core.cfg.resolve("agents_dir", "./agents")
-        (agents_dir / f"{body.name}.yaml").write_text(body.yaml, encoding="utf-8")
-        prompt_rel = data.get("prompt", f"prompts/{body.name}.md")
-        prompt_path = agents_dir / prompt_rel
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(body.prompt, encoding="utf-8")
-        core.agents.load()
-        return {"status": "ok", "agents": core.agents.names()}
 
     # ── tasks · approvals · memories · schedules ─────────────────────────
     @api.get("/api/tasks")
@@ -210,10 +181,102 @@ def create_app(core) -> FastAPI:
         return rows_to_dicts(await core.db.fetchall(
             "SELECT * FROM schedules ORDER BY enabled DESC, next_run"))
 
-    @api.get("/api/agents")
-    async def agents():
-        return [{"name": a.name, "description": a.description, "model": a.model}
-                for a in core.agents.all()]
+    # ── OpenAI-compatible voice front door ───────────────────────────────
+    # POST /v1/chat/completions: any STT→LLM→TTS pipeline can use Lity as its
+    # "LLM". Lity is stateful: only the LAST user message of the request is
+    # used (the Home thread, summary and memory are the real history), and
+    # replies are sanitized to plain speakable text. Unheard assistant
+    # messages (approval announcements, finished-task reports) are prepended
+    # to the next reply; GET /v1/voice/pending lets the voice loop poll and
+    # speak them proactively instead.
+    vstate = {"cursor": None, "lock": asyncio.Lock()}
+
+    async def _max_msg_id() -> int:
+        row = await core.db.fetchone(
+            "SELECT COALESCE(MAX(id),0) AS m FROM messages WHERE thread_id=?", (VOICE_THREAD,))
+        return int(row["m"])
+
+    @api.on_event("startup")
+    async def _init_voice_cursor():
+        vstate["cursor"] = await _max_msg_id()  # history before boot is never re-spoken
+
+    def _voice_auth(request: Request):
+        key = os.environ.get("LITY_API_KEY", "")
+        if key and request.headers.get("authorization", "") != f"Bearer {key}":
+            raise HTTPException(401, "invalid API key")
+
+    async def _unheard(advance: bool = True) -> list[str]:
+        """Assistant messages the voice channel hasn't delivered yet."""
+        if vstate["cursor"] is None:
+            vstate["cursor"] = await _max_msg_id()
+        rows = await core.db.fetchall(
+            "SELECT id, content FROM messages WHERE thread_id=? AND role='assistant' "
+            "AND id>? ORDER BY id", (VOICE_THREAD, vstate["cursor"]))
+        if rows and advance:
+            vstate["cursor"] = rows[-1]["id"]
+        return [r["content"] for r in rows]
+
+    @api.get("/v1/models")
+    async def models():
+        return {"object": "list",
+                "data": [{"id": "lity", "object": "model", "owned_by": "lity"}]}
+
+    @api.get("/v1/voice/pending")
+    async def voice_pending(request: Request):
+        _voice_auth(request)
+        async with vstate["lock"]:
+            texts = [voice.speakable(t) for t in await _unheard()]
+        return {"messages": [t for t in texts if t]}
+
+    @api.post("/v1/chat/completions")
+    async def chat_completions(request: Request):
+        _voice_auth(request)
+        body = await request.json()
+        text = ""
+        for m in reversed(body.get("messages") or []):
+            if m.get("role") == "user":
+                c = m.get("content")
+                if isinstance(c, list):  # multimodal parts → text parts only
+                    c = " ".join(p.get("text", "") for p in c if isinstance(p, dict)
+                                 and p.get("type") == "text")
+                text = (c or "").strip()
+                break
+        if not text:
+            raise HTTPException(400, "no user message in request")
+
+        async with vstate["lock"]:
+            if vstate["cursor"] is None:  # first request before startup hook ran
+                vstate["cursor"] = await _max_msg_id()
+            await core.kernel.on_user_message(VOICE_THREAD, text)
+            parts = [voice.speakable(t) for t in await _unheard()]
+        reply = " ".join(p for p in parts if p) or "Okay."
+
+        cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
+        if not body.get("stream"):
+            return {"id": cid, "object": "chat.completion", "created": created,
+                    "model": "lity",
+                    "choices": [{"index": 0, "finish_reason": "stop",
+                                 "message": {"role": "assistant", "content": reply}}],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+
+        def _chunk(delta: dict, finish=None) -> str:
+            return "data: " + json.dumps({
+                "id": cid, "object": "chat.completion.chunk", "created": created,
+                "model": "lity",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]},
+                ensure_ascii=False) + "\n\n"
+
+        async def stream():
+            # sentence-level chunks: TTS engines speak per sentence anyway
+            yield _chunk({"role": "assistant"})
+            for s in voice.sentences(reply):
+                yield _chunk({"content": s})
+            yield _chunk({}, finish="stop")
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache",
+                                          "X-Accel-Buffering": "no"})
 
     # ── SSE ───────────────────────────────────────────────────────────────
     @api.get("/api/events")

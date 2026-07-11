@@ -1,13 +1,12 @@
 """The skill-learning loop (the Hermes 'compounding agent' pattern).
 
 Two halves:
-1. DISTILL — after a sub-agent finishes a task, a background utility-model job
-   decides whether anything generalizes into a reusable procedure. New skills
-   are inserted; similar existing skills are refined in place, so repetition
-   makes them better instead of duplicating them.
-2. RECALL — when a sub-agent starts a task, the top-matching skills (FTS5) are
-   injected into its system prompt: the agent follows a proven procedure
-   instead of improvising.
+1. DISTILL — after a delegated (Hermes) task finishes, a background
+   utility-model job decides whether anything generalizes into a reusable
+   procedure. New skills are inserted; similar existing skills are refined in
+   place, so repetition makes them better instead of duplicating them.
+2. RECALL — top-matching skills (FTS5) can be pulled up for similar future
+   tasks and reviewed in Settings → Skills.
 
 Plus SOUL LEARNING: whenever a `feedback`-kind memory is saved, LEARNED.md is
 rewritten from all feedback memories — a capped, user-editable adaptation
@@ -25,14 +24,6 @@ the working approach, the right commands/selectors/steps, the pitfall that was h
 NOT a skill: plain facts (that's memory), one-off results, tasks that went smoothly with zero non-obvious insight.
 Reply with JSON only:
   {"name": "<3-6 word imperative name>", "description": "<one line: when this applies>", "steps": "<3-8 terse numbered steps>"}
-or exactly: null"""
-
-ROUTE_SYSTEM = """You watch a personal AI agent (the "kernel") delegate tasks to specialist sub-agents.
-From the completed delegation below, decide if there is a REUSABLE ROUTING LESSON: which sub-agent
-(or kernel tool) is — or is NOT — the right choice for this KIND of request, or a task phrasing that
-made the delegation succeed. NOT a lesson: task-specific facts, one-offs, smooth runs with an obvious route.
-Reply with JSON only:
-  {"name": "<3-6 word imperative name>", "description": "<one line: when this applies>", "steps": "<1-3 terse lines: the route + why / the pitfall>"}
 or exactly: null"""
 
 LEARN_SYSTEM = """You maintain LEARNED.md — the adaptation layer of a personal AI agent's personality.
@@ -91,23 +82,6 @@ class Skills:
         except Exception:
             return
         await self._store(agent, raw, task_id)
-
-    async def distill_routing(self, agent: str, task_text: str, status: str,
-                              result: str, task_id: int | None = None):
-        """Background job: learn WHICH agent/tool fits which kind of request.
-        Lessons are stored under agent='kernel' and injected into the kernel's
-        system prompt by context.build_system. Runs on failures too — a wrong
-        route is exactly what's worth remembering."""
-        if not self.enabled():
-            return
-        prompt = (f"DELEGATED TO: {agent}\nOUTCOME: {status}\nTASK: {task_text[:800]}\n\n"
-                  f"RESULT:\n{result[:1200]}")
-        try:
-            raw = await self.app.llm.complete(
-                self.app.cfg.get_path("models.utility"), ROUTE_SYSTEM, prompt, max_tokens=300)
-        except Exception:
-            return
-        await self._store("kernel", raw, task_id)
 
     async def _store(self, agent: str, raw: str, task_id: int | None):
         """Parse a distiller reply; refine an existing similar skill or insert a new one."""

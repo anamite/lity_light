@@ -17,13 +17,10 @@ echo "• installing dependencies"
 pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
 
-echo "• installing Chromium for the browser agent (this can take a while)"
-python -m playwright install --with-deps chromium || \
-  echo "  (Chromium install failed — everything else works; re-run later for browser tasks)"
-
 if [ ! -f .env ]; then
   read -rp "• OpenRouter API key (sk-or-...): " KEY
   echo "OPENROUTER_API_KEY=$KEY" > .env
+  echo "  (add HERMES_API_KEY=<your Hermes gateway API_SERVER_KEY> to .env too)"
 fi
 
 if command -v systemctl >/dev/null && [ "$(uname)" = "Linux" ]; then

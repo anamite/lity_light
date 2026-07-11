@@ -1,8 +1,0 @@
-name: writer
-description: Long-form writing — reports, documents, drafts; produces polished files in the workspace.
-# model: (unset — uses models.default_agent from config.yaml; set to override)
-prompt: prompts/writer.md
-tools: [write_file, read_file, move_file, copy_file, list_files, fetch_url, send_file, analyze_image]
-max_turns: 15
-max_tokens_total: 120000
-level_cap: 2

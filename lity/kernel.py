@@ -19,6 +19,14 @@ class Kernel:
     async def on_user_message(self, thread_id: int, text: str):
         await self.app.db.add_message(thread_id, "user", text)
         self.app.bus.emit("message.created", thread_id=thread_id, role="user", content=text)
+        # armed approval options: a 1:1 option match executes the decision
+        # deterministically — the LLM is bypassed entirely for this message
+        confirm = await self.app.approvals.try_option_match(thread_id, text)
+        if confirm is not None:
+            await self.app.db.add_message(thread_id, "assistant", confirm)
+            self.app.bus.emit("message.created", thread_id=thread_id,
+                              role="assistant", content=confirm)
+            return
         await self._run_turn(thread_id, latest_user_text=text)
 
     async def system_event(self, thread_id: int, text: str):
