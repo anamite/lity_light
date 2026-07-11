@@ -1,0 +1,77 @@
+# --- Lity - single source of runtime configuration ---------------------------
+name: Lity
+workspace: ./workspace
+database: ./data/lity.db
+agents_dir: ./agents
+
+provider:
+  base_url: https://api.openai.com/v1         # swap to http://localhost:11434/v1 for Ollama
+  api_key_env: OPENAI_API_KEY                 # key itself lives in .env / environment
+
+models:
+  # Test setup: one model everywhere. Later, split tiers, e.g.
+  #   main: anthropic/claude-haiku-4.5 | utility: google/gemini-2.5-flash-lite
+  #   default_agent: anthropic/claude-sonnet-4.5
+  main: gpt-5.4-mini                          # kernel - small & cheap by design
+  utility: gpt-5.4-mini                       # summaries, memory extraction, heartbeat
+  default_agent: gpt-5.4-mini                 # sub-agents unless overridden per-agent
+  vision: gpt-5.4-mini                        # used when images are involved (falls back to main)
+
+kernel:
+  max_window_messages: 20      # verbatim messages kept in context
+  compact_after_messages: 26   # compaction trigger (keeps last keep_recent verbatim)
+  keep_recent: 10
+  memory_inject_top_k: 5
+  max_tool_iterations: 8
+  system_char_budget: 6400     # ~1.6k tokens across all system slots
+  vision_max_images: 2         # newest N attached images embedded into context
+
+skills:
+  enabled: true                # distill reusable skills after tasks, inject on similar ones
+  inject_top_k: 2
+
+autonomy_level: 2              # tool levels <= this run without asking; 4 always asks
+approval_timeout_seconds: 600  # a timed-out (or denied) approval STOPS the task
+approval_nag_seconds: 60       # task waiting on approval this long -> kernel nudges the user
+
+mcp:
+  # External services via the Model Context Protocol. Each server is a stdio
+  # subprocess; its tools register as '<server>_<tool>' and reach sub-agents
+  # through 'mcp:<server>' or 'mcp:*' in the agent YAML tools list.
+  # level (default 3): permission level of ALL the server's tools — 3 means
+  # each tool asks once and 'always' persists; startup_timeout covers the
+  # first-run package download of npx/uvx.
+  servers: {}
+  # Example — Google Workspace (Gmail/Calendar/Drive; needs a Google Cloud
+  # OAuth client, browser auth happens once on first use):
+  #   google:
+  #     command: uvx
+  #     args: [workspace-mcp, --tools, gmail, calendar, drive]
+  #     env:
+  #       GOOGLE_OAUTH_CLIENT_ID: "xxx.apps.googleusercontent.com"
+  #       GOOGLE_OAUTH_CLIENT_SECRET: "xxx"
+  #     level: 3
+  #     startup_timeout: 300
+
+heartbeat:
+  enabled: true
+  interval_minutes: 30
+
+scheduler:
+  tick_seconds: 30
+
+subagents:
+  result_max_chars: 1200       # results longer than this get compressed before
+                               # entering the parent thread (~300 tokens)
+
+hermes:
+  # Optional heavyweight executor: run tasks on an external Hermes Agent via
+  # its runs API. Requires `hermes gateway` running with API_SERVER_ENABLED=true
+  # (see agents/hermes.yaml — hidden from the kernel while enabled is false).
+  enabled: false
+  base_url: http://127.0.0.1:8642
+  api_key_env: HERMES_API_KEY  # = API_SERVER_KEY of the Hermes gateway; put in .env
+
+server:
+  host: 0.0.0.0
+  port: 8321

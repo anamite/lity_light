@@ -1,0 +1,8 @@
+name: researcher
+description: Multi-step web research; use for anything needing several searches or reading full pages, returns a cited brief.
+# model: (unset — uses models.default_agent from config.yaml; set to override)
+prompt: prompts/researcher.md
+tools: [web_search, fetch_url, write_file, read_file, send_file, analyze_image]
+max_turns: 20
+max_tokens_total: 150000
+level_cap: 2

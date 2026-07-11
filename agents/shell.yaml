@@ -1,0 +1,8 @@
+name: shell
+description: System work — installs software, runs shell commands, diagnoses the machine; use for setup and admin tasks.
+# model: (unset — uses models.default_agent from config.yaml; set to override)
+prompt: prompts/shell.md
+tools: [shell, python_run, read_file, write_file, move_file, copy_file, delete_file, list_files]
+max_turns: 20
+max_tokens_total: 120000
+level_cap: 3

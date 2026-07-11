@@ -1,0 +1,8 @@
+name: coder
+description: Writes and executes Python code; use for any coding, data-processing, or file-manipulation task.
+# model: (unset — uses models.default_agent from config.yaml; set to override)
+prompt: prompts/coder.md
+tools: [python_run, shell, read_file, write_file, move_file, copy_file, delete_file, list_files, send_file, analyze_image]
+max_turns: 25
+max_tokens_total: 200000
+level_cap: 3

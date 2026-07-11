@@ -1,0 +1,8 @@
+.env
+data/
+__pycache__/
+*.pyc
+.venv/
+workspace/screenshots/
+workspace/run_*.py
+mcp_servers.yaml

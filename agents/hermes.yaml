@@ -1,0 +1,6 @@
+name: hermes
+description: Heavyweight generalist (external Hermes Agent) — full terminal, browser, files, web and MCP toolbelt; use for big multi-step jobs that mix coding, shell and web work.
+executor: hermes
+# No tools/prompt here: execution happens on the Hermes side with its own
+# system prompt and toolsets. Requires hermes.enabled=true in config.yaml,
+# otherwise this agent is hidden from the kernel.
