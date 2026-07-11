@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# lityctl — start/stop/restart/status/logs for Lity.
+# Usage: ./lityctl {start|stop|restart|status|logs|help}
+
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+PIDFILE="$ROOT/.lity.pid"
+LOGDIR="$ROOT/logs"
+LOGFILE="$LOGDIR/lity.log"
+PYTHON="$ROOT/.venv/bin/python"
+[ -x "$PYTHON" ] || PYTHON="$ROOT/.venv/Scripts/python.exe"  # Windows venv, if ever run there
+
+PORT="$(grep -E '^\s*port:' config.yaml | head -1 | grep -oE '[0-9]+' || echo 8321)"
+
+pid_alive() {
+    [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+cmd_start() {
+    if pid_alive; then
+        echo "Lity is already running (pid $(cat "$PIDFILE"), http://localhost:$PORT)."
+        return 0
+    fi
+    if [ ! -x "$PYTHON" ]; then
+        echo "No venv found at .venv — run ./install.sh (or set up .venv) first." >&2
+        return 1
+    fi
+    mkdir -p "$LOGDIR"
+    nohup "$PYTHON" -m lity >> "$LOGFILE" 2>&1 &
+    disown
+    echo $! > "$PIDFILE"
+    sleep 1
+    if pid_alive; then
+        echo "Lity started (pid $(cat "$PIDFILE")) -> http://localhost:$PORT"
+        echo "Logs: ./lityctl logs"
+    else
+        echo "Lity failed to start — check $LOGFILE" >&2
+        rm -f "$PIDFILE"
+        tail -n 20 "$LOGFILE" 2>/dev/null
+        return 1
+    fi
+}
+
+cmd_stop() {
+    if ! pid_alive; then
+        echo "Lity is not running."
+        rm -f "$PIDFILE"
+        return 0
+    fi
+    pid="$(cat "$PIDFILE")"
+    kill "$pid"
+    for _ in $(seq 1 10); do
+        pid_alive || break
+        sleep 1
+    done
+    if pid_alive; then
+        echo "Still up after 10s, forcing kill -9."
+        kill -9 "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    echo "Lity stopped."
+}
+
+cmd_restart() {
+    cmd_stop
+    cmd_start
+}
+
+cmd_status() {
+    if pid_alive; then
+        pid="$(cat "$PIDFILE")"
+        uptime="$(ps -o etime= -p "$pid" 2>/dev/null | xargs)"
+        echo "Lity is running (pid $pid, up $uptime) -> http://localhost:$PORT"
+    else
+        echo "Lity is not running."
+    fi
+}
+
+cmd_logs() {
+    mkdir -p "$LOGDIR"
+    touch "$LOGFILE"
+    tail -n 50 -f "$LOGFILE"
+}
+
+cmd_help() {
+    cat <<EOF
+lityctl — manage the Lity process
+
+Usage: ./lityctl <command>
+
+Commands:
+  start     Start Lity in the background (no-op if already running)
+  stop      Stop Lity (graceful, then force after 10s)
+  restart   stop, then start — use after pulling code or editing config.yaml/.env
+  status    Show whether Lity is running and its pid/uptime
+  logs      Tail the log file (Ctrl+C to stop watching, Lity keeps running)
+  help      Show this message
+
+Pid file: $PIDFILE
+Log file: $LOGFILE
+EOF
+}
+
+case "${1:-help}" in
+    start)   cmd_start ;;
+    stop)    cmd_stop ;;
+    restart) cmd_restart ;;
+    status)  cmd_status ;;
+    logs)    cmd_logs ;;
+    help|-h|--help) cmd_help ;;
+    *) echo "Unknown command: $1" >&2; cmd_help; exit 1 ;;
+esac
