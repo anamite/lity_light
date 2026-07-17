@@ -12,6 +12,7 @@ from .gateway.events import EventBus
 from .kernel import Kernel
 from .llm import LLM
 from .memory import Memory
+from .quick import Quick
 from .sched.scheduler import Scheduler
 from .skills import Skills
 
@@ -28,6 +29,7 @@ class App:
         self.approvals = Approvals(self)
         self.runner = Runner(self)
         self.kernel = Kernel(self)
+        self.quick = Quick(self)
         self.scheduler = Scheduler(self)
         self._scheduler_task: asyncio.Task | None = None
 
@@ -39,10 +41,12 @@ class App:
         await self.db.execute(
             "UPDATE tasks SET status='failed', result='interrupted by server restart', "
             "finished_at=datetime('now') WHERE status IN ('queued','running','waiting_user')")
+        await self.quick.start()  # restore pending timers/alarms, announce missed ones
         self._scheduler_task = asyncio.create_task(self.scheduler.run())
 
     async def stop(self):
         if self._scheduler_task:
             self._scheduler_task.cancel()
+        await self.quick.shutdown()
         await self.llm.close()
         await self.db.close()

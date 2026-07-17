@@ -48,6 +48,12 @@ hermes:
   result_max_chars: 1200       # longer task results get compressed before
                                # entering the parent thread (~300 tokens)
 
+quick:
+  # Local quick tools: timers/alarms, notes, shopping lists, weather.
+  ring_seconds: 60             # how long a fired timer/alarm rings before auto-silencing
+  beep: true                   # audible beep on this machine's speaker (winsound / aplay)
+  default_city: ""             # weather fallback when the user names no city
+
 server:
   host: 0.0.0.0
   port: 8321

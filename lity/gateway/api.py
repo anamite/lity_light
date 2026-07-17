@@ -185,11 +185,13 @@ def create_app(core) -> FastAPI:
     # POST /v1/chat/completions: any STT→LLM→TTS pipeline can use Lity as its
     # "LLM". Lity is stateful: only the LAST user message of the request is
     # used (the Home thread, summary and memory are the real history), and
-    # replies are sanitized to plain speakable text. Unheard assistant
-    # messages (approval announcements, finished-task reports) are prepended
-    # to the next reply; GET /v1/voice/pending lets the voice loop poll and
-    # speak them proactively instead.
-    vstate = {"cursor": None, "lock": asyncio.Lock()}
+    # replies are sanitized to plain speakable text. Two kinds of background
+    # notification, two behaviors on GET /v1/voice/pending:
+    #   - task results (assistant messages the kernel relays) → returned in
+    #     `messages`, spoken aloud by the voice client as before;
+    #   - approvals (silent 'event' messages) → beep=true exactly once per
+    #     new batch; the kernel explains and walks through them when asked.
+    vstate = {"cursor": None, "beeped_approvals": set(), "lock": asyncio.Lock()}
 
     async def _max_msg_id() -> int:
         row = await core.db.fetchone(
@@ -205,15 +207,16 @@ def create_app(core) -> FastAPI:
         if key and request.headers.get("authorization", "") != f"Bearer {key}":
             raise HTTPException(401, "invalid API key")
 
-    async def _unheard(advance: bool = True) -> list[str]:
-        """Assistant messages the voice channel hasn't delivered yet."""
+    async def _unheard() -> list[str]:
+        """Assistant messages (kernel replies, relayed task results) the voice
+        channel hasn't delivered yet. Advances the cursor — each message is
+        spoken exactly once. 'event' rows (approvals) are skipped: they beep."""
         if vstate["cursor"] is None:
             vstate["cursor"] = await _max_msg_id()
         rows = await core.db.fetchall(
             "SELECT id, content FROM messages WHERE thread_id=? AND role='assistant' "
             "AND id>? ORDER BY id", (VOICE_THREAD, vstate["cursor"]))
-        if rows and advance:
-            vstate["cursor"] = rows[-1]["id"]
+        vstate["cursor"] = await _max_msg_id()  # events are acknowledged too
         return [r["content"] for r in rows]
 
     @api.get("/v1/models")
@@ -223,10 +226,19 @@ def create_app(core) -> FastAPI:
 
     @api.get("/v1/voice/pending")
     async def voice_pending(request: Request):
+        """`messages`: task results / kernel relays to speak aloud, as before.
+        `beep`: true once per batch of NEW pending approvals — the client
+        plays a beep instead of speech, and the user asks the kernel about it."""
         _voice_auth(request)
         async with vstate["lock"]:
             texts = [voice.speakable(t) for t in await _unheard()]
-        return {"messages": [t for t in texts if t]}
+            rows = await core.db.fetchall("SELECT id FROM approvals WHERE status='pending'")
+            pending = {r["id"] for r in rows}
+            new_approvals = pending - vstate["beeped_approvals"]
+            vstate["beeped_approvals"] = pending  # forget resolved, remember beeped
+        return {"messages": [t for t in texts if t],
+                "beep": bool(new_approvals),
+                "pending_approvals": len(pending)}
 
     @api.post("/v1/chat/completions")
     async def chat_completions(request: Request):
@@ -245,9 +257,9 @@ def create_app(core) -> FastAPI:
             raise HTTPException(400, "no user message in request")
 
         async with vstate["lock"]:
-            if vstate["cursor"] is None:  # first request before startup hook ran
-                vstate["cursor"] = await _max_msg_id()
             await core.kernel.on_user_message(VOICE_THREAD, text)
+            # reply = this turn's answer plus any not-yet-spoken task results;
+            # approval events never appear here (they only beep via the poll)
             parts = [voice.speakable(t) for t in await _unheard()]
         reply = " ".join(p for p in parts if p) or "Okay."
 

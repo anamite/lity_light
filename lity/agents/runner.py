@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import httpx
 
-from .. import voice
 from .hermes_executor import HermesClient, classify, extract_output
 
 COMPRESS_SYSTEM = ("Compress this task result for the main agent. Keep: outcome, "
@@ -41,6 +40,28 @@ class Runner:
         self._running[task_id] = t
         t.add_done_callback(lambda _: self._running.pop(task_id, None))
         return task_id, thread_id
+
+    async def resume(self, task_id: int, message: str) -> tuple[bool, str]:
+        """Re-enter a finished task: same task row, same sub-thread, and the
+        same Hermes session key — so Hermes still has the task's full context
+        and the follow-up reads as the next user turn, not a cold start."""
+        row = await self.app.db.fetchone("SELECT * FROM tasks WHERE id=?", (task_id,))
+        if not row:
+            return False, "No such task."
+        if row["agent"] != AGENT_NAME:
+            return False, f"Task #{task_id} is not a {AGENT_NAME} task."
+        if task_id in self._running or row["status"] in ("running", "waiting_user"):
+            return False, (f"Task #{task_id} is still {row['status']} — it can only be "
+                           "continued after it finishes (or cancel it first).")
+        await self.app.db.execute(
+            "UPDATE tasks SET status='running', finished_at=NULL WHERE id=?", (task_id,))
+        self.app.bus.emit("task.updated", task_id=task_id, agent=AGENT_NAME, status="running")
+        t = asyncio.create_task(self._run_hermes(
+            task_id, row["thread_id"], row["parent_thread_id"], message, ""))
+        self._running[task_id] = t
+        t.add_done_callback(lambda _: self._running.pop(task_id, None))
+        return True, (f"Task #{task_id} resumed in its original thread "
+                      f"{row['thread_id']} (Hermes keeps the prior context).")
 
     async def cancel(self, task_id: int) -> bool:
         t = self._running.get(task_id)
@@ -126,7 +147,10 @@ class Runner:
             asyncio.create_task(self.app.skills.distill(
                 AGENT_NAME, task_text, final or result, "\n".join(transcript[-15:]), task_id))
             await self.app.kernel.system_event(
-                parent_thread_id, f"Task #{task_id} ({AGENT_NAME}) finished:\n{result}")
+                parent_thread_id,
+                f"Task #{task_id} ({AGENT_NAME}) finished:\n{result}\n"
+                f"(If this asks the user for something, relay it — and when they answer, "
+                f"use continue_task({task_id}, answer): same thread, context intact.)")
 
         except asyncio.CancelledError:
             if run_id:
@@ -164,14 +188,17 @@ class Runner:
         bus.emit("task.updated", task_id=task_id, agent=agent_name, status="waiting_user")
         bus.emit("approval.requested", id=approval_id, tool=info["tool"],
                  args=args, level=3, thread_id=thread_id)
-        # FIXED voice/chat announcement — deterministic, not LLM-generated.
-        # Lands in the parent thread (dashboard) and in the voice backlog.
+        # Silent notification: an 'event' message is never spoken by the voice
+        # channel (it only beeps) but shows on the dashboard and reaches the
+        # kernel as a [SYSTEM EVENT], so it can explain the approval when the
+        # user asks what the beep was.
         task_row = await db.fetchone("SELECT task FROM tasks WHERE id=?", (task_id,))
         title = (task_row["task"][:60] if task_row else f"#{task_id}")
-        announce = voice.APPROVAL_ANNOUNCE.format(title=title)
-        await db.add_message(parent_thread_id, "assistant", announce)
+        note = (f"Task #{task_id} ('{title}') paused on approval #{approval_id}: "
+                f"`{info['tool']}` needs the user's permission.")
+        await db.add_message(parent_thread_id, "event", note, tool_name="approval")
         bus.emit("message.created", thread_id=parent_thread_id,
-                 role="assistant", content=announce)
+                 role="event", content=note)
         ctx = SimpleNamespace(task_id=task_id, thread_id=thread_id,
                               user_thread_id=parent_thread_id)
         asyncio.create_task(self.app.approvals._nag(approval_id, info["tool"], ctx))
@@ -207,7 +234,10 @@ class Runner:
             (result, task_id))
         self.app.bus.emit("task.updated", task_id=task_id, agent=agent_name, status="blocked")
         await self.app.kernel.system_event(
-            parent_thread_id, f"Task #{task_id} ({agent_name}) BLOCKED:\n{result}")
+            parent_thread_id,
+            f"Task #{task_id} ({agent_name}) BLOCKED:\n{result}\n"
+            f"(When the user is ready, use continue_task({task_id}, message) — "
+            f"same thread, context intact.)")
 
     async def _compress(self, text: str) -> str:
         cap = int(self.app.cfg.get_path("hermes.result_max_chars", 1200))

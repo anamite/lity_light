@@ -68,7 +68,7 @@ def openai_schema(names: list[str]) -> list[dict]:
 
 def load_all():
     """Import all tool modules so their @tool decorators register."""
-    from . import core  # noqa: F401
+    from . import core, quick  # noqa: F401
 
 
 async def run_tool(ctx: ToolContext, name: str, args: dict) -> str:

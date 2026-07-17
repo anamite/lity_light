@@ -4,9 +4,10 @@ by construction, a delegation."""
 from . import params, tool
 
 KERNEL_TOOLS = [
-    "recall", "remember", "delegate", "task_status", "task_log", "cancel_task",
+    "recall", "remember", "delegate", "continue_task", "task_status", "task_log", "cancel_task",
     "schedule", "list_schedules", "quick_search", "search_history",
     "update_user_profile", "send_file", "capabilities", "offer_approval_options",
+    "timer", "note", "shopping", "weather",
 ]
 
 
@@ -43,6 +44,22 @@ async def delegate(ctx, args):
     task_id, thread_id = await ctx.app.runner.spawn(
         args["task"], ctx.thread_id, args.get("context", ""))
     return f"Task #{task_id} started (hermes, sub-thread {thread_id}). You'll be notified when it finishes."
+
+
+@tool("continue_task",
+      "Send a follow-up into a FINISHED task's own thread and Hermes session. Use this — "
+      "not delegate — whenever the user answers a question a task asked, supplies missing "
+      "info, or wants more work on the same job: Hermes still has that task's full context. "
+      "Only start a fresh delegate for genuinely unrelated work.",
+      params({"task_id": {"type": "integer", "description": "the finished task to continue"},
+              "message": {"type": "string",
+                          "description": "the user's answer / follow-up, self-contained"}},
+             required=["task_id", "message"]), level=2)
+async def continue_task(ctx, args):
+    ok, msg = await ctx.app.runner.resume(args["task_id"], args["message"])
+    if ok:
+        msg += " You'll be notified when it finishes."
+    return msg
 
 
 @tool("task_status", "Check the status/result of a delegated task.",

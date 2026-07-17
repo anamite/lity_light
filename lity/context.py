@@ -12,7 +12,11 @@ agent with terminal, files, coding, web browsing/research, email, calendar
 and every external service. Anything beyond your own small tools — running
 code, touching files, browsing, installing, researching, sending email,
 checking calendars, connecting new services — goes to Hermes via
-`delegate(task)`. Do it AUTOMATICALLY: the user never has to say "use
+`delegate(task)`. EXCEPTIONS that are LOCAL and instant — never delegate
+these: timers/alarms (`timer` tool; when one is RINGING on the task board
+and the user says stop, call timer with action stop_ringing), quick notes
+(`note`), shopping lists (`shopping`), weather (`weather`), and the current
+time/date (already in '## Now' — answer directly, no tool). Do it AUTOMATICALLY: the user never has to say "use
 Hermes" or name an executor; that routing is your job. Write the task
 complete and self-contained (Hermes has none of this conversation).
 Delegated tasks run in parallel; a system event delivers each result — relay
@@ -28,13 +32,20 @@ and let it try.
 Style: your replies may be READ ALOUD by a voice assistant. Plain speakable
 sentences only — no markdown, no emojis, no tables, no bullet lists, no
 code blocks. Simple punctuation.
-Approvals: pending approvals appear on the task board with their id; a
-fixed announcement was already sent when one arrived. If the user wants
-details, use task_log on that task and explain in your own words. When the
-user is ready to decide, call offer_approval_options(approval_id) — you can
-NEVER approve or deny anything yourself, and you never invent option words;
-only that tool's exact options, spoken back by the user, execute a decision.
-If their answer isn't an exact option, keep conversing and offer again."""
+Notifications: your replies (including relayed task results) are spoken to
+the user. Approvals are the exception: they are never announced with speech
+— the voice client just plays a beep. When the user asks what the beep or
+notification was, summarize ALL pending approvals in one short answer from
+the task board: e.g. "three approvals pending on the cron-job task". Never
+list them one at a time across turns.
+Approvals: pending approvals appear on the task board with their id. If the
+user wants details, use task_log on that task and explain in your own words.
+When the user is ready to decide, call offer_approval_options(approval_id) —
+you can NEVER approve or deny anything yourself, and you never invent option
+words; only that tool's exact options, spoken back by the user, execute a
+decision. If their answer isn't an exact option, keep conversing and offer
+again. If several approvals are pending, work through them in ONE
+conversation: after one is decided, immediately offer the next."""
 
 
 def _read(path: Path, cap: int) -> str:
@@ -68,8 +79,21 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
 
     tasks_block = await _task_board(app, slot)
 
-    parts = [soul, user_md, DELEGATION_POLICY, tasks_block, mem_block, summary_block]
+    now_local = datetime.now().astimezone()
+    clock = (f"## Now\n{now_local.strftime('%A, %Y-%m-%d %H:%M')} local time "
+             f"({now_local.tzname()}).")
+
+    parts = [soul, user_md, clock, DELEGATION_POLICY, tasks_block, mem_block, summary_block]
     return "\n\n".join(p for p in parts if p)
+
+
+def _age_secs(secs: int) -> str:
+    secs = max(0, secs)
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h {secs % 3600 // 60}m"
 
 
 def _age(ts: str) -> str:
@@ -95,10 +119,27 @@ async def _task_board(app, slot: int) -> str:
         "ORDER BY id DESC LIMIT 8")
     approvals = await app.db.fetchall(
         "SELECT id, tool, task_id FROM approvals WHERE status='pending' ORDER BY id DESC LIMIT 4")
-    if not rows and not approvals:
+    timers = await app.db.fetchall(
+        "SELECT id, kind, label, fires_at, status FROM qtimers "
+        "WHERE status IN ('pending','ringing') ORDER BY status DESC, fires_at LIMIT 6")
+    if not rows and not approvals and not timers:
         return ""
-    lines = [f"#{r['id']} {r['agent']} · {r['status']} · "
-             f"{r['task'][:60]} · {_age(r['created_at'])} ago" for r in rows]
+    lines = []
+    now = datetime.now(timezone.utc)
+    for t in timers:
+        if t["status"] == "ringing":
+            lines.append(f"RINGING NOW: {t['kind']} #{t['id']} '{t['label']}' — user says "
+                         f"stop → timer(action='stop_ringing')")
+        else:
+            try:
+                fires = datetime.strptime(t["fires_at"], "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=timezone.utc)
+                left = _age_secs(int((fires - now).total_seconds()))
+            except (ValueError, TypeError):
+                left = "?"
+            lines.append(f"{t['kind']} #{t['id']} '{t['label']}' fires in {left}")
+    lines += [f"#{r['id']} {r['agent']} · {r['status']} · "
+              f"{r['task'][:60]} · {_age(r['created_at'])} ago" for r in rows]
     lines += [f"approval #{a['id']} PENDING (tool {a['tool']}, task #{a['task_id']}) "
               f"— decide via offer_approval_options({a['id']})" for a in approvals]
     return ("## Task board (waiting_user = needs the user's approval NOW)\n"
