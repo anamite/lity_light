@@ -74,6 +74,7 @@ After=network-online.target sound.target
 
 [Service]
 WorkingDirectory=$(pwd)
+Environment=PYTHONUNBUFFERED=1
 ExecStart=$(pwd)/.venv/bin/python -m lity
 Restart=on-failure
 User=$USER

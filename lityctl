@@ -29,8 +29,10 @@ cmd_start() {
         return 1
     fi
     mkdir -p "$LOGDIR"
-    # extra args (e.g. --voice / --no-voice) pass straight to `python -m lity`
-    nohup "$PYTHON" -m lity "$@" >> "$LOGFILE" 2>&1 &
+    # extra args (e.g. --voice / --no-voice) pass straight to `python -m lity`.
+    # -u: unbuffered — otherwise Python buffers prints when stdout is a file
+    # and the log stays empty until the buffer fills.
+    nohup "$PYTHON" -u -m lity "$@" >> "$LOGFILE" 2>&1 &
     disown
     echo $! > "$PIDFILE"
     sleep 1
