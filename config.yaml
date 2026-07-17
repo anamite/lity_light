@@ -54,6 +54,23 @@ quick:
   beep: true                   # audible beep on this machine's speaker (winsound / aplay)
   default_city: ""             # weather fallback when the user names no city
 
+voice:
+  # In-process voice assistant (wake word -> Speechmatics STT -> kernel ->
+  # local Kokoro TTS). Needs the voice extras (install.sh asks) and
+  # SPEECHMATICS_API_KEY in .env. Enable here, or per-run with
+  # `python -m lity --voice` / `./lityctl start --voice`.
+  enabled: false
+  wake_word: hey_jarvis        # openWakeWord builtins: hey_jarvis, alexa, hey_mycroft, hey_rhasspy
+  wake_threshold: 0.5          # 0-1; raise to reduce false triggers
+  wake_listen_seconds: 8       # after wake, how long to wait for speech
+  followup_seconds: 3          # after the bot replies, mic stays open this long
+  processing_timeout_seconds: 30  # no reply after this -> relock the mic
+  eou_silence_trigger: 1.5     # max mid-sentence pause (s) before the turn ends
+  language: en
+  tts_voice: af_heart          # Kokoro voice id
+  input_device_index:          # blank = system default; list with ./lityctl devices
+  output_device_index:
+
 server:
   host: 0.0.0.0
   port: 8321

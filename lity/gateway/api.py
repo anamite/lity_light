@@ -20,7 +20,6 @@ from ..db import rows_to_dicts
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 EDITABLE_FILES = ["SOUL.md", "LEARNED.md", "USER.md", "HEARTBEAT.md", "AGENTS.md", "MEMORY.md"]
-VOICE_THREAD = 1  # Home — voice and dashboard share one conversation
 
 
 class MessageIn(BaseModel):
@@ -191,33 +190,14 @@ def create_app(core) -> FastAPI:
     #     `messages`, spoken aloud by the voice client as before;
     #   - approvals (silent 'event' messages) → beep=true exactly once per
     #     new batch; the kernel explains and walks through them when asked.
-    vstate = {"cursor": None, "beeped_approvals": set(), "lock": asyncio.Lock()}
-
-    async def _max_msg_id() -> int:
-        row = await core.db.fetchone(
-            "SELECT COALESCE(MAX(id),0) AS m FROM messages WHERE thread_id=?", (VOICE_THREAD,))
-        return int(row["m"])
-
-    @api.on_event("startup")
-    async def _init_voice_cursor():
-        vstate["cursor"] = await _max_msg_id()  # history before boot is never re-spoken
+    # Delivery state (cursor, beeped approvals) is core.voice — shared with
+    # the in-process voicebot, so nothing is ever spoken twice. This endpoint
+    # remains for REMOTE voice satellites; the local mic runs in-process.
 
     def _voice_auth(request: Request):
         key = os.environ.get("LITY_API_KEY", "")
         if key and request.headers.get("authorization", "") != f"Bearer {key}":
             raise HTTPException(401, "invalid API key")
-
-    async def _unheard() -> list[str]:
-        """Assistant messages (kernel replies, relayed task results) the voice
-        channel hasn't delivered yet. Advances the cursor — each message is
-        spoken exactly once. 'event' rows (approvals) are skipped: they beep."""
-        if vstate["cursor"] is None:
-            vstate["cursor"] = await _max_msg_id()
-        rows = await core.db.fetchall(
-            "SELECT id, content FROM messages WHERE thread_id=? AND role='assistant' "
-            "AND id>? ORDER BY id", (VOICE_THREAD, vstate["cursor"]))
-        vstate["cursor"] = await _max_msg_id()  # events are acknowledged too
-        return [r["content"] for r in rows]
 
     @api.get("/v1/models")
     async def models():
@@ -230,15 +210,11 @@ def create_app(core) -> FastAPI:
         `beep`: true once per batch of NEW pending approvals — the client
         plays a beep instead of speech, and the user asks the kernel about it."""
         _voice_auth(request)
-        async with vstate["lock"]:
-            texts = [voice.speakable(t) for t in await _unheard()]
-            rows = await core.db.fetchall("SELECT id FROM approvals WHERE status='pending'")
-            pending = {r["id"] for r in rows}
-            new_approvals = pending - vstate["beeped_approvals"]
-            vstate["beeped_approvals"] = pending  # forget resolved, remember beeped
-        return {"messages": [t for t in texts if t],
-                "beep": bool(new_approvals),
-                "pending_approvals": len(pending)}
+        texts = await core.voice.unheard()
+        rows = await core.db.fetchall("SELECT id FROM approvals WHERE status='pending'")
+        pending = {r["id"] for r in rows}
+        beep = core.voice.approval_beep_poll(pending)
+        return {"messages": texts, "beep": beep, "pending_approvals": len(pending)}
 
     @api.post("/v1/chat/completions")
     async def chat_completions(request: Request):
@@ -256,12 +232,9 @@ def create_app(core) -> FastAPI:
         if not text:
             raise HTTPException(400, "no user message in request")
 
-        async with vstate["lock"]:
-            await core.kernel.on_user_message(VOICE_THREAD, text)
-            # reply = this turn's answer plus any not-yet-spoken task results;
-            # approval events never appear here (they only beep via the poll)
-            parts = [voice.speakable(t) for t in await _unheard()]
-        reply = " ".join(p for p in parts if p) or "Okay."
+        # reply = this turn's answer plus any not-yet-spoken task results;
+        # approval events never appear here (they only beep via the poll)
+        reply = await core.voice.turn(text)
 
         cid, created = f"chatcmpl-{uuid.uuid4().hex[:24]}", int(time.time())
         if not body.get("stream"):

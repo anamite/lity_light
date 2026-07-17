@@ -12,12 +12,18 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 ## Quick start
 
 ```bash
-./install.sh                 # Linux / Pi / macOS / WSL2
-# or manually:
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env         # OpenRouter key + HERMES_API_KEY
-python -m lity
+./install.sh                 # Linux / Pi / macOS / WSL2 — deps + voice + key wizard
+./lityctl start              # add --voice for the voice assistant
+```
+
+Settings live in config.yaml + .env and are managed from the CLI:
+
+```bash
+./lityctl setup              # guided wizard: provider, models, keys, voice
+./lityctl show               # current settings, keys masked
+./lityctl set models.main gpt-5.4-mini
+./lityctl set voice.enabled true
+./lityctl key SPEECHMATICS_API_KEY   # prompts hidden, writes .env
 ```
 
 Hermes side: run `hermes gateway` with `API_SERVER_ENABLED=true` (default
@@ -57,6 +63,31 @@ level, heartbeat, the Hermes gateway) and the `workspace/` markdown files:
 | `workspace/USER.md` | who you are — the agent maintains it |
 | `workspace/HEARTBEAT.md` | standing checks evaluated every heartbeat |
 | `workspace/AGENTS.md` | standing rules sent with every Hermes task |
+
+## Voice assistant (in-process)
+
+The former pipy_catty voice bot now lives inside Lity (`lity/voicebot/`) —
+one process, no HTTP loopback, no separate install:
+
+```
+mic → openWakeWord gate → Speechmatics STT → kernel (direct) → Kokoro TTS → speaker
+```
+
+- **Wake word** ("hey jarvis" by default) gates the mic locally — zero STT
+  cost while idle; saying it while the bot talks barges in.
+- The pipeline's "LLM" is the **kernel itself** (no localhost API hop);
+  replies are TTS-sanitized, and conversation memory stays server-side.
+- **Proactive push**: finished-task results are spoken and new approvals
+  beep (double-high tone) the moment they happen, via the internal event
+  bus — ask "what's pending?" and approve by voice.
+- Enable with `./lityctl start --voice`, or permanently via
+  `voice.enabled: true` in config.yaml. Tune wake word, thresholds, and
+  audio device indices in the `voice:` section (`./lityctl devices` lists
+  them). Needs `SPEECHMATICS_API_KEY` in .env; Kokoro TTS is local (models
+  auto-download on first run).
+- The `/v1` OpenAI-compatible endpoints remain for **remote** voice
+  satellites; local and remote share one spoken-message cursor, so nothing
+  is ever spoken twice.
 
 ## Going local (the endgame)
 

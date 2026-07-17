@@ -314,9 +314,38 @@ Four tabs, all live-editable from the browser:
 Endpoints: `GET /api/settings`, `PUT /api/settings/config`,
 `PUT /api/settings/file`.
 
-## 10a. Voice front door — OpenAI-compatible API
+## 10a. Voice — in-process assistant + OpenAI-compatible front door
 
-Any STT→LLM→TTS pipeline can use Lity as its "LLM":
+### In-process voicebot (`lity/voicebot/`, `voice.enabled` / `--voice`)
+
+The pipecat pipeline (formerly the separate pipy_catty process) runs as an
+asyncio task next to uvicorn:
+
+```
+mic → WakeWordGate → Speechmatics STT → SttGateBridge
+    → context aggregator → LityLLMService → Kokoro TTS → speaker
+```
+
+- **WakeWordGate** (LOCKED/OPEN/MUTED): openWakeWord watches the mic
+  locally; nothing reaches Speechmatics until the wake word fires (zero STT
+  cost while idle). While the bot speaks, silence keeps the STT timeline
+  continuous and the wake word barges in. **SttGateBridge** enforces the
+  frame-hygiene rules (exactly one kernel turn per spoken turn, no phantom
+  turns from stale audio).
+- **LityLLMService** fills the pipeline's LLM slot but awaits
+  `kernel.on_user_message()` directly — no localhost HTTP hop, no OpenAI
+  translation. **Announcer** subscribes to the event bus: Home-thread
+  assistant messages arriving while the mic is idle are spoken immediately;
+  `approval.requested` plays a double beep (was: 4s polling of
+  `/v1/voice/pending`).
+- **TonePlayerObserver** owns all status audio on its own PyAudio stream:
+  high = listening, low = muted, double-high = approval pending.
+- Voice deps are optional (`requirements-voice.txt`); without them, or
+  without `SPEECHMATICS_API_KEY`, Lity logs why and runs web-only.
+
+### HTTP front door (for remote satellites)
+
+Any STT→LLM→TTS pipeline on another machine can still use Lity as its "LLM":
 
 ```
 GET  /v1/models                → [{"id": "lity"}]
@@ -331,10 +360,10 @@ GET  /v1/voice/pending         → unheard assistant messages (poll & speak)
 - Replies pass a **TTS sanitizer** (`lity/voice.py`): markdown, tables,
   emojis, links and code are stripped to plain speakable sentences; the
   kernel prompt also demands speakable style at the source.
-- **Piggyback + polling**: assistant messages produced while no voice
-  request was in flight (approval announcements, finished-task reports) are
-  prepended to the next reply, or fetched proactively via
-  `/v1/voice/pending` (cursor-tracked, never re-spoken).
+- Delivery state (spoken-message cursor, beeped approvals) is
+  **`VoiceChannel`** (`lity/voice.py`), one instance on App shared by the
+  in-process bot and these endpoints — a message is spoken exactly once no
+  matter which channel picks it up first.
 - Auth: set `LITY_API_KEY` in .env to require a bearer key on `/v1/*`.
 
 ### Voice approval dialogue (deterministic by construction)

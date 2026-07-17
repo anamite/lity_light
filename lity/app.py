@@ -1,6 +1,7 @@
 """The App container — wires every subsystem together and owns their lifetime."""
 
 import asyncio
+import contextlib
 
 from . import tools
 from .agents.runner import Runner
@@ -15,6 +16,7 @@ from .memory import Memory
 from .quick import Quick
 from .sched.scheduler import Scheduler
 from .skills import Skills
+from .voice import VoiceChannel
 
 
 class App:
@@ -31,7 +33,9 @@ class App:
         self.kernel = Kernel(self)
         self.quick = Quick(self)
         self.scheduler = Scheduler(self)
+        self.voice = VoiceChannel(self)
         self._scheduler_task: asyncio.Task | None = None
+        self._voice_task: asyncio.Task | None = None
 
     async def start(self):
         tools.load_all()
@@ -42,9 +46,17 @@ class App:
             "UPDATE tasks SET status='failed', result='interrupted by server restart', "
             "finished_at=datetime('now') WHERE status IN ('queued','running','waiting_user')")
         await self.quick.start()  # restore pending timers/alarms, announce missed ones
+        await self.voice.init_cursor()  # pre-boot history is never re-spoken
         self._scheduler_task = asyncio.create_task(self.scheduler.run())
+        if self.cfg.get_path("voice.enabled", False):
+            from . import voicebot  # deferred: voice deps are optional
+            self._voice_task = asyncio.create_task(voicebot.run(self))
 
     async def stop(self):
+        if self._voice_task:
+            self._voice_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._voice_task
         if self._scheduler_task:
             self._scheduler_task.cancel()
         await self.quick.shutdown()

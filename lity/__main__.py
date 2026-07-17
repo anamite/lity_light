@@ -1,5 +1,6 @@
-"""Entry point: `python -m lity [config.yaml]`."""
+"""Entry point: `python -m lity [config.yaml] [--voice|--no-voice]`."""
 
+import argparse
 import asyncio
 import os
 import sys
@@ -18,14 +19,40 @@ def _load_dotenv():
                 os.environ.setdefault(k.strip(), v.strip())
 
 
+def _parse_args():
+    p = argparse.ArgumentParser(prog="lity")
+    p.add_argument("config", nargs="?", default="config.yaml",
+                   help="path to config.yaml (default: ./config.yaml)")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--voice", action="store_true",
+                   help="run the voice assistant (overrides voice.enabled)")
+    g.add_argument("--no-voice", action="store_true",
+                   help="disable the voice assistant (overrides voice.enabled)")
+    p.add_argument("--list-devices", action="store_true",
+                   help="list audio input/output devices and exit")
+    return p.parse_args()
+
+
 async def main():
     _load_dotenv()
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    args = _parse_args()
+
+    if args.list_devices:
+        from .voicebot import missing_deps
+        miss = missing_deps()
+        if miss:
+            print(f"voice deps missing ({miss}) — run ./install.sh with voice enabled.")
+            sys.exit(1)
+        from .voicebot.pipeline import list_audio_devices
+        list_audio_devices()
+        return
 
     from .app import App
     from .gateway.api import create_app
 
-    core = App(config_path)
+    core = App(args.config)
+    if args.voice or args.no_voice:
+        core.cfg.setdefault("voice", {})["enabled"] = bool(args.voice)
     await core.start()
 
     key_env = core.cfg.get_path("provider.api_key_env", "OPENROUTER_API_KEY")

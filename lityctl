@@ -29,7 +29,8 @@ cmd_start() {
         return 1
     fi
     mkdir -p "$LOGDIR"
-    nohup "$PYTHON" -m lity >> "$LOGFILE" 2>&1 &
+    # extra args (e.g. --voice / --no-voice) pass straight to `python -m lity`
+    nohup "$PYTHON" -m lity "$@" >> "$LOGFILE" 2>&1 &
     disown
     echo $! > "$PIDFILE"
     sleep 1
@@ -66,7 +67,23 @@ cmd_stop() {
 
 cmd_restart() {
     cmd_stop
-    cmd_start
+    cmd_start "$@"
+}
+
+cmd_devices() {
+    if [ ! -x "$PYTHON" ]; then
+        echo "No venv found at .venv — run ./install.sh first." >&2
+        return 1
+    fi
+    "$PYTHON" -m lity --list-devices
+}
+
+cmd_setup() {
+    if [ ! -x "$PYTHON" ]; then
+        echo "No venv found at .venv — run ./install.sh first." >&2
+        return 1
+    fi
+    "$PYTHON" -m lity.setup "$@"
 }
 
 cmd_status() {
@@ -93,10 +110,18 @@ Usage: ./lityctl <command>
 
 Commands:
   start     Start Lity in the background (no-op if already running)
+            Extra args pass through: ./lityctl start --voice
   stop      Stop Lity (graceful, then force after 10s)
   restart   stop, then start — use after pulling code or editing config.yaml/.env
   status    Show whether Lity is running and its pid/uptime
   logs      Tail the log file (Ctrl+C to stop watching, Lity keeps running)
+  devices   List audio input/output devices (for config.yaml voice indices)
+  setup     Interactive wizard: provider, models, API keys, voice — stores
+            everything in config.yaml/.env automatically
+  show      Current settings + which API keys are set (masked)
+  get PATH  Read a config value            e.g. ./lityctl get models.main
+  set PATH VALUE  Write a config value     e.g. ./lityctl set voice.enabled true
+  key NAME [VALUE]  Set a .env key         e.g. ./lityctl key SPEECHMATICS_API_KEY
   help      Show this message
 
 Pid file: $PIDFILE
@@ -104,12 +129,20 @@ Log file: $LOGFILE
 EOF
 }
 
-case "${1:-help}" in
-    start)   cmd_start ;;
+CMD="${1:-help}"
+shift 2>/dev/null || true
+case "$CMD" in
+    start)   cmd_start "$@" ;;
     stop)    cmd_stop ;;
-    restart) cmd_restart ;;
+    restart) cmd_restart "$@" ;;
     status)  cmd_status ;;
     logs)    cmd_logs ;;
+    devices) cmd_devices ;;
+    setup)   cmd_setup ;;
+    show)    cmd_setup show ;;
+    get)     cmd_setup get "$@" ;;
+    set)     cmd_setup set "$@" ;;
+    key)     cmd_setup key "$@" ;;
     help|-h|--help) cmd_help ;;
-    *) echo "Unknown command: $1" >&2; cmd_help; exit 1 ;;
+    *) echo "Unknown command: $CMD" >&2; cmd_help; exit 1 ;;
 esac
