@@ -16,9 +16,18 @@ class Kernel:
         self.app = app
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+    def _deliver(self, mid: int, text: str, source: str):
+        """Channel routing for a stored assistant reply: typed and Telegram
+        turns are never spoken (VoiceChannel skips them); Telegram turns also
+        go back out to Telegram. Voice and event turns change nothing here."""
+        if source in ("text", "telegram"):
+            self.app.voice.note_text_reply(mid)
+        if source == "telegram":
+            self.app.telegram.reply_bg(text)
+
     async def on_user_message(self, thread_id: int, text: str, source: str = "text"):
-        """source: 'text' (web UI) or 'voice'. Replies to TYPED input are marked
-        UI-delivered so the voicebot doesn't read them out (see VoiceChannel)."""
+        """source: 'text' (web UI), 'voice', or 'telegram' — decides where the
+        reply is delivered (see _deliver)."""
         await self.app.db.add_message(thread_id, "user", text)
         self.app.bus.emit("message.created", thread_id=thread_id, role="user", content=text)
         # armed approval options: a 1:1 option match executes the decision
@@ -26,8 +35,7 @@ class Kernel:
         confirm = await self.app.approvals.try_option_match(thread_id, text)
         if confirm is not None:
             mid = await self.app.db.add_message(thread_id, "assistant", confirm)
-            if source == "text":
-                self.app.voice.note_text_reply(mid)
+            self._deliver(mid, confirm, source)
             self.app.bus.emit("message.created", thread_id=thread_id,
                               role="assistant", content=confirm)
             return
@@ -86,8 +94,7 @@ class Kernel:
                     if direct and not result.startswith(("Denied", "Error")):
                         # tool output goes straight to the user — no extra model step
                         mid = await self.app.db.add_message(thread_id, "assistant", result)
-                        if source == "text":
-                            self.app.voice.note_text_reply(mid)
+                        self._deliver(mid, result, source)
                         self.app.bus.emit("message.created", thread_id=thread_id,
                                           role="assistant", content=result)
                         final_text = result
@@ -121,8 +128,7 @@ class Kernel:
                     final_text = ""
             if final_text and not direct_sent:
                 mid = await self.app.db.add_message(thread_id, "assistant", final_text)
-                if source == "text":
-                    self.app.voice.note_text_reply(mid)
+                self._deliver(mid, final_text, source)
                 self.app.bus.emit("message.created", thread_id=thread_id,
                                   role="assistant", content=final_text)
 

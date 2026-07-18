@@ -100,6 +100,16 @@ gcal:
                                # every turn | on_demand = fetched only via the tool
   timezone: ""                 # IANA name, e.g. Europe/Berlin; blank = system tz
 
+telegram:
+  # Telegram bridge. Create a bot with @BotFather, put its token in .env as
+  # TELEGRAM_BOT_TOKEN, then ./lityctl setup step 6 pairs your chat id
+  # automatically. Only that chat is ever answered. Section is re-read live —
+  # no restart. Incoming texts arrive tagged [via Telegram]; replies go back
+  # there silently. Outbound sends happen only via the telegram tool on request.
+  enabled: false
+  chat_id: ""                  # your personal chat with the bot (wizard fills this)
+  forward_approvals: true      # approval requests also appear there with decision buttons
+
 server:
   host: 0.0.0.0
   port: 8321

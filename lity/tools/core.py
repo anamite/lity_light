@@ -9,6 +9,7 @@ KERNEL_TOOLS = [
     "schedule", "list_schedules", "quick_search", "search_history",
     "update_user_profile", "send_file", "capabilities", "offer_approval_options",
     "timer", "note", "shopping", "weather", "volume", "calendar", "speech_mode",
+    "telegram",
 ]
 
 
@@ -242,7 +243,8 @@ async def capabilities(ctx, args):
         t = REGISTRY.get(n)
         if t:
             lines.append(f"- {t.name}: {t.description}")
-    lines.append("\n## External modules\n- " + ctx.app.gcal.status())
+    lines.append("\n## External modules\n- " + ctx.app.gcal.status()
+                 + "\n- " + ctx.app.telegram.status())
     from ..sched.crons import MIN_EVERY_SECONDS
     lines.append(
         "\n## Scheduling\n"

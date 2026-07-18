@@ -14,6 +14,7 @@ from .kernel import Kernel
 from .llm import LLM
 from .memory import Memory
 from .modules.gcal import GoogleCalendar
+from .modules.telegram import Telegram
 from .quick import Quick
 from .sched.scheduler import Scheduler
 from .skills import Skills
@@ -34,10 +35,12 @@ class App:
         self.kernel = Kernel(self)
         self.quick = Quick(self)
         self.gcal = GoogleCalendar(self)
+        self.telegram = Telegram(self)
         self.scheduler = Scheduler(self)
         self.voice = VoiceChannel(self)
         self._scheduler_task: asyncio.Task | None = None
         self._voice_task: asyncio.Task | None = None
+        self._telegram_task: asyncio.Task | None = None
 
     async def start(self):
         tools.load_all()
@@ -50,6 +53,8 @@ class App:
         await self.quick.start()  # restore pending timers/alarms, announce missed ones
         await self.voice.init_cursor()  # pre-boot history is never re-spoken
         self._scheduler_task = asyncio.create_task(self.scheduler.run())
+        # idles until telegram: is configured (live config) — no restart needed
+        self._telegram_task = asyncio.create_task(self.telegram.run())
         if self.cfg.get_path("voice.enabled", False):
             from . import voicebot  # deferred: voice deps are optional
             self._voice_task = asyncio.create_task(voicebot.run(self))
@@ -61,6 +66,8 @@ class App:
                 await self._voice_task
         if self._scheduler_task:
             self._scheduler_task.cancel()
+        if self._telegram_task:
+            self._telegram_task.cancel()
         await self.quick.shutdown()
         await self.llm.close()
         await self.db.close()

@@ -128,6 +128,36 @@ def config_get(dotted: str = ""):
     return node
 
 
+# ── telegram pairing ────────────────────────────────────────────────────────
+def telegram_pair(token: str, wait_seconds: int = 60):
+    """Wait for the user to message their new bot; return the chat dict."""
+    import time
+
+    import httpx
+    base = f"https://api.telegram.org/bot{token}"
+    deadline = time.time() + wait_seconds
+    offset = None
+    while time.time() < deadline:
+        try:
+            params = {"timeout": 10}
+            if offset is not None:
+                params["offset"] = offset
+            r = httpx.get(f"{base}/getUpdates", params=params, timeout=15)
+            data = r.json()
+        except Exception:
+            time.sleep(2)
+            continue
+        if not data.get("ok"):
+            print(f"     Telegram says: {data.get('description', 'error')} — check the token.")
+            return None
+        for u in data.get("result", []):
+            offset = u.get("update_id", 0) + 1
+            chat = (u.get("message") or {}).get("chat") or {}
+            if chat.get("id"):
+                return chat
+    return None
+
+
 # ── interactive helpers ─────────────────────────────────────────────────────
 def ask(prompt: str, current=None) -> str | None:
     """Prompt; empty answer (or EOF / piped end) keeps the current value."""
@@ -297,6 +327,34 @@ def wizard():
      4. deps once, in the venv: pip install -r requirements-modules.txt
    Config is re-read live — no restart needed.""")
 
+    en = ask_yesno("enable Telegram bridge (messages, files, approval buttons)",
+                   bool(config_get("telegram.enabled")))
+    config_set("telegram.enabled", en)
+    if en:
+        print("   Create a bot once: message @BotFather in Telegram → /newbot → "
+              "copy the token.")
+        tok = ask_secret("TELEGRAM_BOT_TOKEN", env.get("TELEGRAM_BOT_TOKEN", ""))
+        if tok:
+            env_set("TELEGRAM_BOT_TOKEN", tok)
+        tok = tok or env.get("TELEGRAM_BOT_TOKEN", "")
+        cur_chat = config_get("telegram.chat_id")
+        if tok and ask_yesno("pair your chat id automatically now", not cur_chat):
+            print("     → Send ANY message to your bot in Telegram (waiting up to 60s)…")
+            chat = telegram_pair(tok)
+            if chat:
+                config_set("telegram.chat_id", str(chat["id"]))
+                who = chat.get("first_name") or chat.get("username") or chat["id"]
+                print(f"     Paired with {who} (chat id {chat['id']}).")
+            else:
+                print("     No message arrived — set it later with "
+                      "./lityctl set telegram.chat_id YOUR_ID")
+        else:
+            val = ask("telegram.chat_id (from @userinfobot)", cur_chat)
+            if val:
+                config_set("telegram.chat_id", val)
+        print("   Approval requests will show up there with decision buttons "
+              "(disable: ./lityctl set telegram.forward_approvals false).")
+
     print("\n── saved. Review anytime with:  ./lityctl show")
     show()
 
@@ -322,9 +380,16 @@ def show():
               f"agenda: {g.get('inject_daily') or 'always'})")
     else:
         print("gcal     : disabled (module — enable in setup step 6, or ask Lity)")
+    t = cfg.get("telegram") or {}
+    if t.get("enabled"):
+        print("telegram :", f"enabled (chat: {t.get('chat_id') or 'NOT PAIRED'}, "
+              f"token: {'set' if env.get('TELEGRAM_BOT_TOKEN') else 'MISSING'}, "
+              f"approval buttons: {'on' if t.get('forward_approvals', True) else 'off'})")
+    else:
+        print("telegram : disabled (module — enable in setup step 6, or ask Lity)")
     print("keys     :")
     for name in dict.fromkeys([key_env, "HERMES_API_KEY", "SPEECHMATICS_API_KEY",
-                               "RESEMBLE_API_KEY", "LITY_API_KEY"]):
+                               "RESEMBLE_API_KEY", "TELEGRAM_BOT_TOKEN", "LITY_API_KEY"]):
         print(f"  {name:<22} {mask(env.get(name, ''))}")
 
 
