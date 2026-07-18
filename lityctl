@@ -88,6 +88,38 @@ cmd_setup() {
     "$PYTHON" -m lity.setup "$@"
 }
 
+cmd_fresh() {
+    # Clear a thread's working context (default: Home thread 1). Nothing is
+    # deleted — messages are marked collapsed and the rolling summary dropped;
+    # history stays in the DB. Works with Lity running (SQLite WAL) or stopped.
+    if [ ! -x "$PYTHON" ]; then
+        echo "No venv found at .venv — run ./install.sh first." >&2
+        return 1
+    fi
+    "$PYTHON" - "$@" <<'PYEOF'
+import sqlite3, sys
+
+import yaml
+
+cfg = yaml.safe_load(open("config.yaml", encoding="utf-8")) or {}
+db_path = str(cfg.get("database") or "./data/lity.db")
+tid = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+try:
+    con = sqlite3.connect(db_path, timeout=10)
+except sqlite3.Error as e:
+    sys.exit(f"Cannot open {db_path}: {e}")
+try:
+    n = con.execute("UPDATE messages SET collapsed=1 WHERE thread_id=? AND collapsed=0",
+                    (tid,)).rowcount
+    con.execute("DELETE FROM summaries WHERE thread_id=?", (tid,))
+    con.commit()
+finally:
+    con.close()
+print(f"Thread {tid}: context cleared — {n} messages folded away, summary dropped.")
+print("History stays in the DB (searchable); long-term memory untouched.")
+PYEOF
+}
+
 cmd_status() {
     if pid_alive; then
         pid="$(cat "$PIDFILE")"
@@ -124,6 +156,10 @@ Commands:
   get PATH  Read a config value            e.g. ./lityctl get models.main
   set PATH VALUE  Write a config value     e.g. ./lityctl set voice.enabled true
   key NAME [VALUE]  Set a .env key         e.g. ./lityctl key SPEECHMATICS_API_KEY
+  fresh [THREAD]  Clear a conversation's working context (default: Home
+            thread). Nothing is deleted — history stays searchable; the
+            assistant just starts its next turn with a clean slate.
+            (Or simply tell Lity: "start fresh".)
   help      Show this message
 
 Pid file: $PIDFILE
@@ -145,6 +181,7 @@ case "$CMD" in
     get)     cmd_setup get "$@" ;;
     set)     cmd_setup set "$@" ;;
     key)     cmd_setup key "$@" ;;
+    fresh)   cmd_fresh "$@" ;;
     help|-h|--help) cmd_help ;;
     *) echo "Unknown command: $CMD" >&2; cmd_help; exit 1 ;;
 esac

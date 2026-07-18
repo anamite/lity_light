@@ -97,10 +97,12 @@ Step 1 — create the key (user, in a browser):
   d. Open the new service account > Keys > Add key > Create new key > JSON — a .json key file downloads.
 
 Step 2 — put that file on the Lity machine at exactly: {self.key_path()}
-  Options: scp/copy it there themselves, OR the user pastes the JSON content into the chat and you delegate to Hermes: "create the file {self.key_path()} with this exact content: …".
+  From the computer where it downloaded: scp ~/Downloads/THE_FILE.json USER@LITY_HOST:{self.key_path()}
+  OR the user pastes the JSON content into the chat and you delegate to Hermes: "create the file {self.key_path()} with this exact content: …".
 
-Step 3 — share the calendar with the robot:
-  The key file's "client_email" is{f" {email}" if email else " inside the .json (…@…iam.gserviceaccount.com)"}. In calendar.google.com > Settings > (their calendar) > "Share with specific people or groups" > add that email with permission "Make changes to events".
+Step 3 — share the calendar with the robot. IMPORTANT: only possible on the calendar.google.com WEBSITE in a browser — the Google Calendar phone app has no sharing settings.
+  The robot's email is the key file's "client_email":{f" {email}" if email else ' find it with: grep client_email <the .json> (looks like …@…iam.gserviceaccount.com).'}
+  On calendar.google.com: gear icon (top right) > Settings > left sidebar under "Settings for my calendars" click the calendar (usually the user's own name) > "Share with specific people or groups" > Add people > paste the robot's email > permission "Make changes to events" > Send.
 
 Step 4 — config (user runs on the Lity machine, or delegate to Hermes):
   ./lityctl set gcal.enabled true

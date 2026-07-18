@@ -5,6 +5,7 @@ from . import params, tool
 
 KERNEL_TOOLS = [
     "recall", "remember", "delegate", "continue_task", "task_status", "task_log", "cancel_task",
+    "fresh_start",
     "schedule", "list_schedules", "quick_search", "search_history",
     "update_user_profile", "send_file", "capabilities", "offer_approval_options",
     "timer", "note", "shopping", "weather", "volume", "calendar",
@@ -117,6 +118,21 @@ async def search_history(ctx, args):
     return "\n".join(
         f"[{r['created_at']}] ({r['title'][:40]}, thread {r['thread_id']}) "
         f"{r['role']}: {r['content'][:160]}" for r in rows)
+
+
+@tool("fresh_start",
+      "Clear THIS conversation's working context: every past message leaves your context "
+      "window and the rolling summary is deleted, so your next turn starts from a clean "
+      "slate. NOTHING is lost — full history stays in the database (search_history still "
+      "finds it) and long-term memory is untouched. Use when the user says start fresh / "
+      "clear the conversation / clean slate / forget this conversation.",
+      params({}, required=[]), level=2)
+async def fresh_start(ctx, args):
+    n = await ctx.app.db.reset_context(ctx.thread_id)
+    ctx.app.bus.emit("thread.compacted", thread_id=ctx.thread_id)
+    return (f"Done — context cleared ({n} messages folded away, summary dropped). "
+            "History remains searchable and memories are kept. Tell the user briefly; "
+            "from the next turn you start clean.")
 
 
 @tool("cancel_task", "Cancel a running delegated task.",

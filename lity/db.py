@@ -225,6 +225,20 @@ class DB:
             (parent_id, kind, title),
         )
 
+    async def reset_context(self, thread_id: int) -> int:
+        """Fresh start: fold EVERYTHING out of the kernel's working context —
+        every message becomes collapsed and the rolling summary is dropped.
+        Nothing is deleted: history stays in this table (and FTS search); only
+        what the kernel sees next turn is a clean slate."""
+        row = await self.fetchone(
+            "SELECT COUNT(*) AS n FROM messages WHERE thread_id=? AND collapsed=0",
+            (thread_id,))
+        await self.execute(
+            "UPDATE messages SET collapsed=1 WHERE thread_id=? AND collapsed=0",
+            (thread_id,))
+        await self.execute("DELETE FROM summaries WHERE thread_id=?", (thread_id,))
+        return int(row["n"])
+
     async def recent_messages(self, thread_id: int, limit: int):
         rows = await self.fetchall(
             "SELECT * FROM messages WHERE thread_id=? AND collapsed=0 ORDER BY id DESC LIMIT ?",
