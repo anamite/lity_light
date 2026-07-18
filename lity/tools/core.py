@@ -8,7 +8,7 @@ KERNEL_TOOLS = [
     "fresh_start",
     "schedule", "list_schedules", "quick_search", "search_history",
     "update_user_profile", "send_file", "capabilities", "offer_approval_options",
-    "timer", "note", "shopping", "weather", "volume", "calendar",
+    "timer", "note", "shopping", "weather", "volume", "calendar", "speech_mode",
 ]
 
 
@@ -118,6 +118,25 @@ async def search_history(ctx, args):
     return "\n".join(
         f"[{r['created_at']}] ({r['title'][:40]}, thread {r['thread_id']}) "
         f"{r['role']}: {r['content'][:160]}" for r in rows)
+
+
+@tool("speech_mode",
+      "Whether replies to TYPED (web UI) messages are ALSO spoken by the voice assistant. "
+      "Default ui_only: typed input gets a silent on-screen reply (voice input is always "
+      "spoken; task results and schedules are always announced). Actions: status, "
+      "speak_all (read typed replies aloud too), ui_only (back to default). Use when the "
+      "user says things like 'stop reading my typed messages' or 'speak everything'.",
+      params({"action": {"type": "string", "enum": ["status", "speak_all", "ui_only"]}},
+             required=["action"]), level=1, direct=True)
+async def speech_mode(ctx, args):
+    a = str(args.get("action") or "status").lower()
+    if a in ("speak_all", "ui_only"):
+        from ..setup import config_set
+        config_set("voice.speak_text_replies", a == "speak_all")
+    on = ctx.app.voice.speak_text_replies
+    return ("Speech mode: replies to typed messages are "
+            + ("spoken aloud as well." if on else "shown in the UI only, not spoken.")
+            + " Voice input is always answered aloud; task results are always announced.")
 
 
 @tool("fresh_start",

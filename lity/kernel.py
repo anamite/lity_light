@@ -16,26 +16,31 @@ class Kernel:
         self.app = app
         self._locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
-    async def on_user_message(self, thread_id: int, text: str):
+    async def on_user_message(self, thread_id: int, text: str, source: str = "text"):
+        """source: 'text' (web UI) or 'voice'. Replies to TYPED input are marked
+        UI-delivered so the voicebot doesn't read them out (see VoiceChannel)."""
         await self.app.db.add_message(thread_id, "user", text)
         self.app.bus.emit("message.created", thread_id=thread_id, role="user", content=text)
         # armed approval options: a 1:1 option match executes the decision
         # deterministically — the LLM is bypassed entirely for this message
         confirm = await self.app.approvals.try_option_match(thread_id, text)
         if confirm is not None:
-            await self.app.db.add_message(thread_id, "assistant", confirm)
+            mid = await self.app.db.add_message(thread_id, "assistant", confirm)
+            if source == "text":
+                self.app.voice.note_text_reply(mid)
             self.app.bus.emit("message.created", thread_id=thread_id,
                               role="assistant", content=confirm)
             return
-        await self._run_turn(thread_id, latest_user_text=text)
+        await self._run_turn(thread_id, latest_user_text=text, source=source)
 
     async def system_event(self, thread_id: int, text: str):
-        """Task results, fired schedules, heartbeat findings enter here."""
+        """Task results, fired schedules, heartbeat findings enter here.
+        source='event': these are proactive — the voicebot DOES announce them."""
         await self.app.db.add_message(thread_id, "event", text)
         self.app.bus.emit("message.created", thread_id=thread_id, role="event", content=text)
-        await self._run_turn(thread_id, latest_user_text=text)
+        await self._run_turn(thread_id, latest_user_text=text, source="event")
 
-    async def _run_turn(self, thread_id: int, latest_user_text: str):
+    async def _run_turn(self, thread_id: int, latest_user_text: str, source: str = "text"):
         async with self._locks[thread_id]:
             cfg = self.app.cfg
             system = await context.build_system(self.app, thread_id, latest_user_text)
@@ -80,7 +85,9 @@ class Kernel:
                         direct = False
                     if direct and not result.startswith(("Denied", "Error")):
                         # tool output goes straight to the user — no extra model step
-                        await self.app.db.add_message(thread_id, "assistant", result)
+                        mid = await self.app.db.add_message(thread_id, "assistant", result)
+                        if source == "text":
+                            self.app.voice.note_text_reply(mid)
                         self.app.bus.emit("message.created", thread_id=thread_id,
                                           role="assistant", content=result)
                         final_text = result
@@ -113,7 +120,9 @@ class Kernel:
                 if prev and prev["content"].strip() == final_text.strip():
                     final_text = ""
             if final_text and not direct_sent:
-                await self.app.db.add_message(thread_id, "assistant", final_text)
+                mid = await self.app.db.add_message(thread_id, "assistant", final_text)
+                if source == "text":
+                    self.app.voice.note_text_reply(mid)
                 self.app.bus.emit("message.created", thread_id=thread_id,
                                   role="assistant", content=final_text)
 

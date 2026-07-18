@@ -79,6 +79,11 @@ voice:
   resemble_voice: ""           # Resemble voice UUID (app.resemble.ai/hub/voices)
   openai_tts_voice: nova       # alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer
   openai_tts_model: gpt-4o-mini-tts
+  speak_text_replies: false    # false = replies to TYPED (web UI) input stay on
+                               # screen, not spoken (voice input + task results are
+                               # always spoken). Read LIVE — toggle anytime with
+                               # ./lityctl set voice.speak_text_replies true, or
+                               # tell Lity "speak your replies to my texts too".
   input_device_index:          # blank = system default; list with ./lityctl devices
   output_device_index:
 

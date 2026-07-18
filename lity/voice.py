@@ -91,6 +91,22 @@ class VoiceChannel:
         self.lock = asyncio.Lock()
         self._cursor: int | None = None
         self._beeped: set[int] = set()
+        self._ui_delivered: set[int] = set()  # replies to TYPED input — never speak
+
+    @property
+    def speak_text_replies(self) -> bool:
+        """voice.speak_text_replies, read LIVE from config.yaml — so both the
+        speech_mode kernel tool and `./lityctl set` take effect immediately.
+        False (default): typed input → reply in the UI only. True: spoken too."""
+        from .modules import modules_cfg
+        return bool(modules_cfg(self.app, "voice").get("speak_text_replies", False))
+
+    def note_text_reply(self, mid: int):
+        """Kernel calls this for every assistant reply to a TYPED message.
+        Unless merge mode is on, the reply is already on screen — mark it so
+        the voicebot skips it (the cursor still advances past it)."""
+        if not self.speak_text_replies:
+            self._ui_delivered.add(mid)
 
     async def _max_msg_id(self) -> int:
         row = await self.app.db.fetchone(
@@ -113,6 +129,8 @@ class VoiceChannel:
             "SELECT id, content FROM messages WHERE thread_id=? AND role='assistant' "
             "AND id>? ORDER BY id", (self.THREAD, self._cursor))
         self._cursor = await self._max_msg_id()
+        rows = [r for r in rows if r["id"] not in self._ui_delivered]
+        self._ui_delivered = {i for i in self._ui_delivered if i > self._cursor}
         return [t for t in (speakable(r["content"]) for r in rows) if t]
 
     async def unheard(self) -> list[str]:
@@ -123,7 +141,7 @@ class VoiceChannel:
         """One voice turn: hand the utterance to the kernel, return this turn's
         answer plus any not-yet-spoken task results, ready for TTS."""
         async with self.lock:
-            await self.app.kernel.on_user_message(self.THREAD, text)
+            await self.app.kernel.on_user_message(self.THREAD, text, source="voice")
             parts = await self._unheard_locked()
         return " ".join(parts) or "Okay."
 
