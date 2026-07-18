@@ -69,6 +69,8 @@ voice:
   followup_seconds: 3          # after the bot replies, mic stays open this long
   processing_timeout_seconds: 30  # no reply after this -> relock the mic
   eou_silence_trigger: 1.5     # max mid-sentence pause (s) before the turn ends
+  speech_gap_seconds: 1.0      # bot audio gaps shorter than this don't reopen the
+                               # mic (cloud TTS pauses between sentences)
   language: en
   tts_engine: kokoro           # kokoro (local, free, slower on a Pi) |
                                # resemble (Resemble AI cloud, needs RESEMBLE_API_KEY in .env) |

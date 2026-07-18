@@ -17,7 +17,8 @@ Gate states (see the original state diagram):
              SILENCE toward Speechmatics (keeps its audio timeline continuous
              so half-heard words flush out now and get dropped). openWakeWord
              still watches the real mic: the wake word interrupts (barge-in).
-       │ TTS finished (BotStoppedSpeaking)
+       │ TTS finished (BotStoppedSpeaking, debounced by speech_gap_seconds —
+       │ cloud TTS drains the speaker between sentences of one reply)
        ▼
     OPEN     Mic reopens for followup_seconds, then LOCKED.
 
@@ -86,6 +87,7 @@ class VoiceSettings:
     followup_seconds: float = 3.0
     processing_timeout_seconds: float = 30.0
     eou_silence_trigger: float = 1.5
+    speech_gap_seconds: float = 1.0  # bot pauses shorter than this aren't "finished"
     language: str = "en"
     tts_engine: str = "kokoro"  # kokoro (local) | resemble (cloud) | openai (cloud)
     tts_voice: str = "af_heart"
@@ -107,7 +109,8 @@ class VoiceSettings:
             if v:
                 setattr(s, f, str(v))
         for f in ("wake_threshold", "wake_listen_seconds", "followup_seconds",
-                  "processing_timeout_seconds", "eou_silence_trigger"):
+                  "processing_timeout_seconds", "eou_silence_trigger",
+                  "speech_gap_seconds"):
             v = cfg.get_path(f"voice.{f}")
             if v is not None:
                 setattr(s, f, float(v))
@@ -159,6 +162,7 @@ class WakeWordGate(FrameProcessor):
         self._wake_listen_seconds = settings.wake_listen_seconds
         self._followup_seconds = settings.followup_seconds
         self._mute_timeout = settings.processing_timeout_seconds
+        self._speech_gap = settings.speech_gap_seconds
 
         _ensure_wakeword_models(self._wakeword)
         self._oww = WakeWordModel(
@@ -170,6 +174,7 @@ class WakeWordGate(FrameProcessor):
         self._user_speaking = False
         self._relock_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
+        self._reopen_task: asyncio.Task | None = None
 
     @property
     def is_open(self) -> bool:
@@ -192,13 +197,20 @@ class WakeWordGate(FrameProcessor):
         # Bot speaking frames also travel upstream, so we see them here.
         if isinstance(frame, BotStartedSpeakingFrame):
             self._cancel_watchdog()  # the bot responded; the turn wasn't lost
+            self._cancel_reopen()    # ...and the sentence gap wasn't the end
             self._mute("bot speaking")
         elif isinstance(frame, BotStoppedSpeakingFrame):
             # Only on a natural end of bot speech. After a barge-in we're
             # already OPEN with the full wake window; the interrupted bot's
             # trailing BotStopped must not shrink it.
+            #
+            # DEBOUNCED: cloud TTS delivers a multi-sentence reply in bursts,
+            # and the transport fires BotStopped whenever the speaker buffer
+            # drains between them. Reopening immediately made the mic (and its
+            # beeps) flap mid-reply — so wait speech_gap_seconds first; a new
+            # BotStarted inside that window means the reply is still going.
             if self._state == "MUTED":
-                self._open(self._followup_seconds, "bot finished")
+                self._schedule_reopen()
 
         await self.push_frame(frame, direction)
 
@@ -260,6 +272,7 @@ class WakeWordGate(FrameProcessor):
         self._user_speaking = False
         self._cancel_relock()
         self._cancel_watchdog()
+        self._cancel_reopen()
         self._relock_task = asyncio.create_task(self._relock_timer(relock_after))
         logger.info(f"🟢 Open ({reason}) — mic → Speechmatics")
         self._notify_mic_state(listening=True)
@@ -276,6 +289,7 @@ class WakeWordGate(FrameProcessor):
         self._state = "LOCKED"
         self._cancel_relock()
         self._cancel_watchdog()
+        self._cancel_reopen()
         self._pending = np.zeros(0, dtype=np.int16)
         self._oww.reset()
         spoken = self._wakeword.replace("_", " ")
@@ -304,6 +318,26 @@ class WakeWordGate(FrameProcessor):
         self._start_watchdog()
 
     # ---- timers --------------------------------------------------------------
+    def _schedule_reopen(self):
+        self._cancel_reopen()
+        self._reopen_task = asyncio.create_task(self._reopen_timer())
+
+    async def _reopen_timer(self):
+        """The bot went quiet — reopen only if it STAYS quiet (see the
+        BotStoppedSpeaking debounce comment in process_frame)."""
+        try:
+            await asyncio.sleep(self._speech_gap)
+            if self._state == "MUTED":
+                self._reopen_task = None  # don't self-cancel via _open()
+                self._open(self._followup_seconds, "bot finished")
+        except asyncio.CancelledError:
+            pass
+
+    def _cancel_reopen(self):
+        if self._reopen_task and not self._reopen_task.done():
+            self._reopen_task.cancel()
+        self._reopen_task = None
+
     async def _relock_timer(self, timeout: float):
         try:
             await asyncio.sleep(timeout)
