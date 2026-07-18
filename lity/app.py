@@ -13,6 +13,7 @@ from .gateway.events import EventBus
 from .kernel import Kernel
 from .llm import LLM
 from .memory import Memory
+from .modules.gcal import GoogleCalendar
 from .quick import Quick
 from .sched.scheduler import Scheduler
 from .skills import Skills
@@ -32,6 +33,7 @@ class App:
         self.runner = Runner(self)
         self.kernel = Kernel(self)
         self.quick = Quick(self)
+        self.gcal = GoogleCalendar(self)
         self.scheduler = Scheduler(self)
         self.voice = VoiceChannel(self)
         self._scheduler_task: asyncio.Task | None = None

@@ -42,6 +42,9 @@ echo "• installing dependencies"
 pip install --quiet --upgrade pip setuptools wheel
 pip install --quiet -r requirements.txt
 
+read -rp "• install external module extras (Google Calendar auth libs)? [Y/n] " YN
+[ "${YN,,}" != "n" ] && pip install --quiet -r requirements-modules.txt
+
 if [ "$WITH_VOICE" = "y" ]; then
   echo "• installing voice dependencies (pipecat, Kokoro TTS — this can take a while)"
   pip install --quiet -r requirements-voice.txt

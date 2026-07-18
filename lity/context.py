@@ -8,15 +8,17 @@ from pathlib import Path
 
 DELEGATION_POLICY = """## Delegation policy — Hermes does the work
 You are the lightweight front desk. Hermes is your single executor: a full
-agent with terminal, files, coding, web browsing/research, email, calendar
-and every external service. Anything beyond your own small tools — running
+agent with terminal, files, coding, web browsing/research, email and every
+external service. Anything beyond your own small tools — running
 code, touching files, browsing, installing, researching, sending email,
-checking calendars, connecting new services — goes to Hermes via
+connecting new services — goes to Hermes via
 `delegate(task)`. EXCEPTIONS that are LOCAL and instant — never delegate
 these: timers/alarms (`timer` tool; when one is RINGING on the task board
 and the user says stop, call timer with action stop_ringing), quick notes
 (`note`), shopping lists (`shopping`), weather (`weather`), speaker volume
-(`volume`: get/set/up/down/mute — "louder"/"quieter" means this), and the current
+(`volume`: get/set/up/down/mute — "louder"/"quieter" means this), Google
+Calendar (`calendar`: agenda/add/update/delete; not connected yet? its
+setup action returns a manual — walk the user through it), and the current
 time/date (already in '## Now' — answer directly, no tool). Do it AUTOMATICALLY: the user never has to say "use
 Hermes" or name an executor; that routing is your job. Write the task
 complete and self-contained (Hermes has none of this conversation).
@@ -84,7 +86,12 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
     clock = (f"## Now\n{now_local.strftime('%A, %Y-%m-%d %H:%M')} local time "
              f"({now_local.tzname()}).")
 
-    parts = [soul, user_md, clock, DELEGATION_POLICY, tasks_block, mem_block, summary_block]
+    # today's agenda (gcal module) — cached inside the module, "" when the
+    # module is off or set to on_demand
+    cal_block = await app.gcal.system_block(slot // 2)
+
+    parts = [soul, user_md, clock, cal_block, DELEGATION_POLICY, tasks_block,
+             mem_block, summary_block]
     return "\n\n".join(p for p in parts if p)
 
 

@@ -272,6 +272,31 @@ def wizard():
     if val:
         env_set("LITY_API_KEY", val)
 
+    # 6. external modules -----------------------------------------------------
+    print("\n6) External modules")
+    en = ask_yesno("enable Google Calendar module", bool(config_get("gcal.enabled")))
+    config_set("gcal.enabled", en)
+    if en:
+        val = ask("calendar id (usually your gmail address)", config_get("gcal.calendar_id"))
+        if val:
+            config_set("gcal.calendar_id", val)
+        cur = config_get("gcal.inject_daily") or "always"
+        print(f"   daily agenda in the assistant's context (current: {cur})")
+        print("     [1] always    — today's events visible on every turn")
+        print("     [2] on_demand — fetched only when the calendar tool is used")
+        choice = ask("inject_daily")
+        if choice in ("1", "2"):
+            config_set("gcal.inject_daily", "always" if choice == "1" else "on_demand")
+        sa = config_get("gcal.service_account_file") or "data/gcal_service_account.json"
+        print(f"""   Remaining one-time steps (or just ask Lity: "set up google calendar"):
+     1. console.cloud.google.com → enable "Google Calendar API" → create a
+        service account → Keys → new JSON key (downloads a .json file)
+     2. put that file at: {sa}
+     3. share your calendar (calendar.google.com → Settings) with the
+        service account's client_email — permission "Make changes to events"
+     4. deps once, in the venv: pip install -r requirements-modules.txt
+   Config is re-read live — no restart needed.""")
+
     print("\n── saved. Review anytime with:  ./lityctl show")
     show()
 
@@ -289,6 +314,14 @@ def show():
     print("voice    :", (f"enabled (wake: {v.get('wake_word')}, "
                          f"tts: {v.get('tts_engine') or 'kokoro'})" if v.get("enabled")
                          else f"disabled (enable: ./lityctl start --voice)"))
+    g = cfg.get("gcal") or {}
+    if g.get("enabled"):
+        key_file = ROOT / str(g.get("service_account_file") or "data/gcal_service_account.json")
+        print("gcal     :", f"enabled (calendar: {g.get('calendar_id') or 'NOT SET'}, "
+              f"key file: {'found' if key_file.is_file() else 'MISSING'}, "
+              f"agenda: {g.get('inject_daily') or 'always'})")
+    else:
+        print("gcal     : disabled (module — enable in setup step 6, or ask Lity)")
     print("keys     :")
     for name in dict.fromkeys([key_env, "HERMES_API_KEY", "SPEECHMATICS_API_KEY",
                                "RESEMBLE_API_KEY", "LITY_API_KEY"]):

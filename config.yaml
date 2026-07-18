@@ -82,6 +82,19 @@ voice:
   input_device_index:          # blank = system default; list with ./lityctl devices
   output_device_index:
 
+# ── External modules (optional integrations; each is its own section) ────────
+gcal:
+  # Google Calendar. Auth is a Google SERVICE ACCOUNT (robot account) — no
+  # browser login on this machine. Setup: ask Lity "set up google calendar"
+  # (the assistant has the manual), or ./lityctl setup step 6. This section is
+  # re-read live on every call: changes here need NO restart.
+  enabled: false
+  calendar_id: ""              # the calendar to use — usually your gmail address
+  service_account_file: data/gcal_service_account.json
+  inject_daily: always         # always = today's events in the assistant's context
+                               # every turn | on_demand = fetched only via the tool
+  timezone: ""                 # IANA name, e.g. Europe/Berlin; blank = system tz
+
 server:
   host: 0.0.0.0
   port: 8321

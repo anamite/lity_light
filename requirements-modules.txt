@@ -1,0 +1,4 @@
+# External module extras (optional; Lity runs without them).
+# gcal: service-account auth = JWT signed with the key file (RS256).
+PyJWT
+cryptography
