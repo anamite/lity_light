@@ -59,18 +59,14 @@
           border:1px solid transparent;transition:background .12s,border-color .12s}
   .thread:hover{background:var(--panel2)}
   .thread.active{background:var(--panel2);border-color:var(--line)}
-  .thread.active::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--accent);
-                          box-shadow:0 0 6px var(--accent);flex-shrink:0}
   .thread.kind-agent{color:var(--agent);padding-left:22px;font-size:12.5px}
   .thread .badge{font:600 9.5px var(--font-mono);color:var(--dim);margin-left:auto;
-                 background:var(--panel3);padding:1px 6px;border-radius:5px;letter-spacing:.4px}
-  #newthread{margin:12px 12px 4px;padding:9px;background:transparent;
-             border:1.5px dashed var(--line);border-radius:var(--radius);color:var(--dim);
-             text-align:center;cursor:pointer;font:600 12.5px var(--font-ui);
-             display:flex;align-items:center;justify-content:center;gap:6px;
-             transition:all .15s}
-  #newthread:hover{color:var(--accent);border-color:var(--accent-dim);background:var(--accent-glow)}
-  #tasks{border-top:1px solid var(--line);max-height:30vh;overflow-y:auto;padding:4px 8px 10px}
+                 background:var(--panel3);padding:1px 6px;border-radius:5px;letter-spacing:.4px;
+                 flex-shrink:0}
+  .thread .home-ic{width:15px;height:15px;color:var(--dim);flex-shrink:0;stroke-width:2}
+  .thread.active .home-ic{color:var(--accent)}
+  .thread .thread-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #tasks{border-top:1px solid var(--line);max-height:30vh;overflow-y:auto;padding:4px 8px 10px;margin-top:6px}
   .task{margin:6px 4px 0;padding:8px 10px;background:var(--panel2);border-radius:9px;
         border:1px solid var(--line-soft);
         font-size:11.5px;color:var(--dim);cursor:pointer;transition:border-color .15s,transform .1s}
@@ -205,10 +201,6 @@
   <h1><span class="mark">L</span>Lity <small>lightweight agent</small></h1>
   <div class="sect">Threads</div>
   <div id="threads"></div>
-  <div id="newthread">
-    <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-    new thread
-  </div>
   <div class="sect">Tasks</div>
   <div id="tasks"></div>
 </aside>
@@ -296,8 +288,18 @@ async function loadThreads(){
   for(const t of threads){
     const d = document.createElement('div');
     d.className = 'thread kind-'+t.kind + (t.id===current?' active':'');
-    d.textContent = (t.id===1?'🏠 ':'') + t.title;
-    if(t.kind==='agent') d.innerHTML += ' <span class="badge">agent</span>';
+    if(t.id===1){
+      d.insertAdjacentHTML('beforeend',
+        '<svg class="ic home-ic" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-9"/><path d="M9.5 20v-6a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v6"/></svg>');
+    }
+    const label = document.createElement('span');
+    label.className = 'thread-label'; label.textContent = t.title;
+    d.appendChild(label);
+    if(t.kind==='agent'){
+      const badge = document.createElement('span');
+      badge.className = 'badge'; badge.textContent = 'agent';
+      d.appendChild(badge);
+    }
     d.onclick = () => { closeSettings(); openThread(t.id); };
     box.appendChild(d);
   }
@@ -404,13 +406,6 @@ $('#fileinput').onchange = async () => {
   const r = await fetch(`/api/threads/${current}/files`, {method:'POST', body:fd});
   if(r.ok){ showTyping(); } else { toast('upload failed', true); }
 };
-$('#newthread').onclick = async () => {
-  const title = prompt('Thread title:','New thread');
-  if(!title) return;
-  const t = await api('/threads',{title});
-  await loadThreads(); closeSettings(); openThread(t.id);
-};
-
 /* ── settings dashboard ── */
 let settingsOpen = false;
 function closeSettings(){
