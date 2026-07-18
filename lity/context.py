@@ -149,7 +149,10 @@ async def _task_board(app, slot: int) -> str:
     lines += [f"#{r['id']} {r['agent']} · {r['status']} · "
               f"{r['task'][:60]} · {_age(r['created_at'])} ago" for r in rows]
     lines += [f"approval #{a['id']} PENDING (tool {a['tool']}, task #{a['task_id']}) "
-              f"— decide via offer_approval_options({a['id']})" for a in approvals]
+              f"— decide via offer_approval_options({a['id']})"
+              + (" · ALSO sent to the user's Telegram with decision buttons — a tap "
+                 "there resolves it" if app.telegram.has_card(a["id"]) else "")
+              for a in approvals]
     return ("## Task board (waiting_user = needs the user's approval NOW)\n"
             + "\n".join(lines))[:slot]
 

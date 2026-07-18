@@ -175,6 +175,12 @@ CURRENT STATUS: {self.status()}"""
         if mid:
             self._cards[approval_id] = (mid, row["tool"])
 
+    def has_card(self, approval_id: int) -> bool:
+        """True while this approval's button card is live in the owner's chat —
+        lets the kernel tell the user 'it's on your Telegram' instead of only
+        pointing at the dashboard."""
+        return approval_id in self._cards
+
     async def _mark_resolved(self, approval_id: int, status: str):
         card = self._cards.pop(approval_id, None)
         if not card:

@@ -95,11 +95,14 @@ class Approvals:
         row = await self.app.db.fetchone("SELECT status FROM approvals WHERE id=?", (approval_id,))
         if not row or row["status"] != "pending":
             return
+        on_tg = (" It was ALSO sent to their Telegram with decision buttons — remind them "
+                 "to check their phone." if self.app.telegram.has_card(approval_id) else "")
         await self.app.kernel.system_event(
             ctx.user_thread_id,
             f"Task #{ctx.task_id} has been waiting over {delay}s for the user to approve "
             f"`{tool_name}`. Ask the user to check the approval card (task thread "
-            f"#{ctx.thread_id}) — the task stays paused and will stop if the approval expires.")
+            f"#{ctx.thread_id}) — the task stays paused and will stop if the approval "
+            f"expires.{on_tg}")
 
     async def resolve(self, approval_id: int, decision: str) -> bool:
         decision = str(decision).strip().lower()
