@@ -53,6 +53,9 @@ quick:
   ring_seconds: 60             # how long a fired timer/alarm rings before auto-silencing
   beep: true                   # audible beep on this machine's speaker (winsound / aplay)
   default_city: ""             # weather fallback when the user names no city
+  alsa_card:                   # blank = auto-detect the card with a playback volume
+  alsa_control:                # blank = auto (Speaker / PCM / Master / Headphone);
+                               # inspect with `amixer -c <n> scontrols`
 
 voice:
   # In-process voice assistant (wake word -> Speechmatics STT -> kernel ->

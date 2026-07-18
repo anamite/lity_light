@@ -1,6 +1,6 @@
 """Quick local tool system — the small stuff that must never need Hermes:
 timers & alarms (with a real ringing beep on the server's speaker), notes,
-shopping lists and weather. One service (`app.quick`) validates every request,
+shopping lists, weather and speaker volume. One service (`app.quick`) validates every request,
 owns the async timer engine, and answers in plain speakable strings.
 
 Timer lifecycle: pending → (fires) ringing → done | missed. Ringing beeps in
@@ -130,6 +130,7 @@ class Quick:
         self._ringers: dict[int, asyncio.Task] = {}
         self._wcache: dict[str, tuple[float, str]] = {}  # city -> (expiry, report)
         self._wav = None
+        self._mixer: tuple[str, str] | None = None  # detected (alsa card, control)
 
     # ── lifecycle ─────────────────────────────────────────────────────────
     async def start(self):
@@ -357,6 +358,98 @@ class Quick:
             return f"No note #{nid}."
         await self.app.db.execute("DELETE FROM notes WHERE id=?", (nid,))
         return f"Deleted note #{nid} '{row['title']}'."
+
+    # ── speaker volume (ALSA amixer — e.g. the Pi's USB speaker) ──────────
+    # Card/control auto-detect: USB audio devices expose one playback control,
+    # usually 'Speaker' or 'PCM', on their own card. quick.alsa_card /
+    # quick.alsa_control in config.yaml pin it when detection guesses wrong.
+    _MIXER_PREFERRED = ("Speaker", "PCM", "Master", "Headphone", "Digital")
+
+    async def _amixer(self, *args) -> tuple[int, str]:
+        """Run amixer without blocking the event loop. Returns (rc, output)."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "amixer", *args,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            return proc.returncode or 0, out.decode(errors="replace")
+        except FileNotFoundError:
+            return 127, "amixer not found (ALSA utils not installed?)"
+        except (OSError, asyncio.TimeoutError) as e:
+            return 1, f"amixer failed: {e}"
+
+    async def _find_mixer(self) -> tuple[str, str]:
+        """Return (card, control) with a playback volume; cached until an
+        amixer call fails (USB replug can renumber cards)."""
+        if self._mixer:
+            return self._mixer
+        card_cfg = self.app.cfg.get_path("quick.alsa_card")
+        ctrl_cfg = str(self.app.cfg.get_path("quick.alsa_control") or "").strip()
+        cards = ([str(card_cfg)] if card_cfg not in (None, "")
+                 else [str(i) for i in range(8)])
+        for card in cards:
+            rc, out = await self._amixer("-c", card, "scontrols")
+            if rc != 0:
+                continue
+            names = re.findall(r"Simple mixer control '([^']+)'", out)
+            ordered = ([ctrl_cfg] if ctrl_cfg in names else
+                       [n for n in self._MIXER_PREFERRED if n in names] +
+                       [n for n in names if n not in self._MIXER_PREFERRED])
+            for name in ordered:
+                rc, out = await self._amixer("-c", card, "sget", name)
+                if rc == 0 and re.search(r"\[\d{1,3}%\]", out):
+                    self._mixer = (card, name)
+                    return self._mixer
+        raise ValueError(
+            "No ALSA playback volume control found. Is the USB speaker plugged in? "
+            "You can pin it via quick.alsa_card / quick.alsa_control in config.yaml "
+            "(inspect with `amixer -c <n> scontrols`).")
+
+    @staticmethod
+    def _mixer_state(out: str) -> tuple[int | None, bool]:
+        """Parse amixer output → (percent, muted)."""
+        pct = re.search(r"\[(\d{1,3})%\]", out)
+        return (int(pct.group(1)) if pct else None), "[off]" in out
+
+    async def volume(self, action: str, level=None, step=None) -> str:
+        if sys.platform in ("win32", "darwin"):
+            return ("Volume control is implemented for Linux/ALSA (the Pi's speaker) "
+                    "only — use the system volume controls on this machine.")
+        action = str(action or "get").lower()
+        card, ctrl = await self._find_mixer()
+
+        if action in ("set",):
+            if level is None:
+                return "Set needs a level between 0 and 100."
+            target = f"{max(0, min(100, int(level)))}%"
+        elif action in ("up", "down"):
+            pts = max(1, min(100, int(step or 10)))
+            target = f"{pts}%{'+' if action == 'up' else '-'}"
+        elif action in ("mute", "unmute"):
+            target = action
+        elif action in ("get", "status"):
+            target = None
+        else:
+            return "Unknown action — use get, set, up, down, mute or unmute."
+
+        if target is None:
+            rc, out = await self._amixer("-c", card, "sget", ctrl)
+        else:
+            rc, out = await self._amixer("-c", card, "sset", ctrl, target)
+        if rc != 0:
+            self._mixer = None  # stale card number? re-detect next time
+            if action in ("mute", "unmute") and "Invalid command" in out:
+                # control has no mute switch — emulate with 0% / a sane level
+                rc, out = await self._amixer(
+                    "-c", card, "sset", ctrl, "0%" if action == "mute" else "40%")
+            if rc != 0:
+                return f"amixer error on card {card} '{ctrl}': {out.strip()[:200]}"
+
+        pct, muted = self._mixer_state(out)
+        state = f"{pct}%" if pct is not None else "unknown"
+        if muted:
+            state += " (muted)"
+        return f"Speaker volume is {state}."
 
     # ── shopping lists ────────────────────────────────────────────────────
     async def _resolve_list(self, ref, create: bool = False):

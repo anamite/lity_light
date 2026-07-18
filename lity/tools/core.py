@@ -7,7 +7,7 @@ KERNEL_TOOLS = [
     "recall", "remember", "delegate", "continue_task", "task_status", "task_log", "cancel_task",
     "schedule", "list_schedules", "quick_search", "search_history",
     "update_user_profile", "send_file", "capabilities", "offer_approval_options",
-    "timer", "note", "shopping", "weather",
+    "timer", "note", "shopping", "weather", "volume",
 ]
 
 

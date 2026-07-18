@@ -1,5 +1,5 @@
 """Quick local tools — thin dispatchers over app.quick (lity/quick.py).
-Four tools instead of fifteen keeps the per-turn schema budget small; all
+Five tools instead of fifteen keeps the per-turn schema budget small; all
 validation and the actual work live in the Quick service."""
 
 from . import params, tool
@@ -95,6 +95,23 @@ async def shopping(ctx, args):
     except ValueError as e:
         return str(e)
     return "Unknown action — use add, remove, check, view, lists, create or delete_list."
+
+
+@tool("volume",
+      "Speaker output volume on this machine (the voice assistant's speaker, via ALSA). "
+      "Actions: get, set (needs level 0-100), up, down (optional step %, default 10), "
+      "mute, unmute.",
+      params({"action": {"type": "string",
+                         "enum": ["get", "set", "up", "down", "mute", "unmute"]},
+              "level": {"type": "integer", "description": "for set: 0-100"},
+              "step": {"type": "integer", "description": "for up/down: percent points, default 10"}},
+             required=["action"]), level=1, direct=True)
+async def volume(ctx, args):
+    try:
+        return await ctx.app.quick.volume(
+            args.get("action"), args.get("level"), args.get("step"))
+    except ValueError as e:
+        return str(e)
 
 
 @tool("weather",
