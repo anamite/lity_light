@@ -2,5 +2,5 @@
 # openwakeword is NOT listed here: it hard-requires tflite-runtime on Linux,
 # which has no wheel for many Pi Python builds, even though only its ONNX
 # backend is used. install.sh installs it with --no-deps (see there).
-pipecat-ai[speechmatics,openai,silero,local,kokoro]
+pipecat-ai[speechmatics,openai,silero,local,kokoro,resemble]
 soxr

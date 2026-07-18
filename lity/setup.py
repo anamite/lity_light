@@ -235,6 +235,37 @@ def wizard():
         if val:
             env_set("SPEECHMATICS_API_KEY", val)
 
+        cur_tts = config_get("voice.tts_engine") or "kokoro"
+        print(f"   TTS engine        (current: {cur_tts})")
+        print("     [1] kokoro   — local, free, no key (slower on a Pi)")
+        print("     [2] resemble — Resemble AI cloud (Chatterbox voices), fast, needs API key")
+        print("     [3] openai   — OpenAI gpt-4o-mini-tts, fast, uses OPENAI_API_KEY")
+        choice = ask("tts engine")
+        engine = {"1": "kokoro", "2": "resemble", "3": "openai"}.get(choice or "", cur_tts)
+        config_set("voice.tts_engine", engine)
+        if engine == "kokoro":
+            val = ask("Kokoro voice id", config_get("voice.tts_voice") or "af_heart")
+            if val:
+                config_set("voice.tts_voice", val)
+        elif engine == "resemble":
+            val = ask("Resemble voice UUID (app.resemble.ai/hub/voices)",
+                      config_get("voice.resemble_voice"))
+            if val:
+                config_set("voice.resemble_voice", val)
+            val = ask_secret("RESEMBLE_API_KEY", env.get("RESEMBLE_API_KEY", ""))
+            if val:
+                env_set("RESEMBLE_API_KEY", val)
+        elif engine == "openai":
+            val = ask("OpenAI TTS voice (alloy/ash/ballad/coral/echo/fable/nova/onyx/sage/shimmer)",
+                      config_get("voice.openai_tts_voice") or "nova")
+            if val:
+                config_set("voice.openai_tts_voice", val)
+            if not env.get("OPENAI_API_KEY"):
+                val = ask_secret("OPENAI_API_KEY (needed for OpenAI TTS)",
+                                 env.get("OPENAI_API_KEY", ""))
+                if val:
+                    env_set("OPENAI_API_KEY", val)
+
     # 5. optional bearer auth on /v1 -----------------------------------------
     print("\n5) Voice API auth (only needed if other machines call /v1)")
     val = ask_secret("LITY_API_KEY (empty = open on LAN)", env.get("LITY_API_KEY", ""))
@@ -255,11 +286,12 @@ def show():
     print("hermes   :", "enabled -> " + str((cfg.get("hermes") or {}).get("base_url"))
           if (cfg.get("hermes") or {}).get("enabled") else "disabled")
     v = cfg.get("voice") or {}
-    print("voice    :", (f"enabled (wake: {v.get('wake_word')})" if v.get("enabled")
+    print("voice    :", (f"enabled (wake: {v.get('wake_word')}, "
+                         f"tts: {v.get('tts_engine') or 'kokoro'})" if v.get("enabled")
                          else f"disabled (enable: ./lityctl start --voice)"))
     print("keys     :")
     for name in dict.fromkeys([key_env, "HERMES_API_KEY", "SPEECHMATICS_API_KEY",
-                               "LITY_API_KEY"]):
+                               "RESEMBLE_API_KEY", "LITY_API_KEY"]):
         print(f"  {name:<22} {mask(env.get(name, ''))}")
 
 

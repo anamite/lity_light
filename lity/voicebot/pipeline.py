@@ -87,7 +87,11 @@ class VoiceSettings:
     processing_timeout_seconds: float = 30.0
     eou_silence_trigger: float = 1.5
     language: str = "en"
+    tts_engine: str = "kokoro"  # kokoro (local) | resemble (cloud) | openai (cloud)
     tts_voice: str = "af_heart"
+    resemble_voice: str = ""            # Resemble voice UUID
+    openai_tts_voice: str = "nova"
+    openai_tts_model: str = "gpt-4o-mini-tts"
     input_device_index: int | None = None
     output_device_index: int | None = None
     kokoro_model_path: str | None = None
@@ -97,7 +101,8 @@ class VoiceSettings:
     @classmethod
     def from_cfg(cls, cfg) -> "VoiceSettings":
         s = cls()
-        for f in ("wake_word", "language", "tts_voice", "speechmatics_api_key_env"):
+        for f in ("wake_word", "language", "tts_engine", "tts_voice", "resemble_voice",
+                  "openai_tts_voice", "openai_tts_model", "speechmatics_api_key_env"):
             v = cfg.get_path(f"voice.{f}")
             if v:
                 setattr(s, f, str(v))

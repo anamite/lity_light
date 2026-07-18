@@ -2,7 +2,7 @@
 
     mic → WakeWordGate → Speechmatics STT → SttGateBridge
         → context aggregator → LityLLMService (the kernel, in-process)
-        → Kokoro TTS (local) → speaker
+        → TTS (Kokoro local by default; Resemble AI / OpenAI cloud) → speaker
 
 Runs as an asyncio task next to uvicorn (started by App.start when
 voice.enabled). Cancellation from App.stop shuts the pipeline down cleanly."""
@@ -34,6 +34,64 @@ def _language(code: str):
         return Language.EN
 
 
+def _build_tts(settings):
+    """TTS per voice.tts_engine: kokoro (local, default), resemble (Resemble AI
+    cloud, Chatterbox voices), openai (OpenAI gpt-4o-mini-tts). Cloud engines
+    fall back to Kokoro when their API key / voice id is missing, so a config
+    mistake degrades to the free local voice instead of a dead speaker."""
+    engine = (settings.tts_engine or "kokoro").lower()
+
+    if engine == "resemble":
+        key, voice = os.environ.get("RESEMBLE_API_KEY", ""), settings.resemble_voice
+        if key and voice:
+            from pipecat.services.resembleai.tts import ResembleAITTSService
+
+            logger.info(f"🔊 TTS: Resemble AI (voice {voice})")
+            return ResembleAITTSService(
+                api_key=key,
+                settings=ResembleAITTSService.Settings(voice=voice),
+            )
+        logger.warning(
+            "voice.tts_engine=resemble but "
+            + ("RESEMBLE_API_KEY is not set in .env" if not key
+               else "voice.resemble_voice (voice UUID) is empty")
+            + " — falling back to Kokoro.")
+
+    elif engine == "openai":
+        key = os.environ.get("OPENAI_API_KEY", "")
+        if key:
+            from pipecat.services.openai.tts import OpenAITTSService
+
+            logger.info(f"🔊 TTS: OpenAI {settings.openai_tts_model} "
+                        f"(voice {settings.openai_tts_voice})")
+            return OpenAITTSService(
+                api_key=key,
+                settings=OpenAITTSService.Settings(
+                    voice=settings.openai_tts_voice,
+                    model=settings.openai_tts_model,
+                ),
+            )
+        logger.warning("voice.tts_engine=openai but OPENAI_API_KEY is not set "
+                       "in .env — falling back to Kokoro.")
+
+    elif engine != "kokoro":
+        logger.warning(f"voice.tts_engine {engine!r} unknown — using Kokoro.")
+
+    # Local Kokoro TTS (ONNX, no API key). Model files auto-download to
+    # ~/.cache/pipecat/kokoro-onnx/ unless the paths point at an install.
+    from pipecat.services.kokoro.tts import KokoroTTSService
+
+    logger.info(f"🔊 TTS: Kokoro local (voice {settings.tts_voice})")
+    return KokoroTTSService(
+        model_path=settings.kokoro_model_path,
+        voices_path=settings.kokoro_voices_path,
+        settings=KokoroTTSService.Settings(
+            voice=settings.tts_voice,
+            language=_language(settings.language),
+        ),
+    )
+
+
 async def run_bot(core):
     # Pipecat 1.5.0 soft-deprecates PipelineTask/PipelineRunner for the newer
     # Worker API, but the task/runner pattern is still the documented
@@ -57,7 +115,6 @@ async def run_bot(core):
     from pipecat.processors.aggregators.llm_response_universal import (
         LLMContextAggregatorPair,
     )
-    from pipecat.services.kokoro.tts import KokoroTTSService
     from pipecat.services.speechmatics.stt import SpeechmaticsSTTService
     from pipecat.transports.local.audio import (
         LocalAudioTransport,
@@ -91,16 +148,7 @@ async def run_bot(core):
 
     llm = LityLLMService(core)  # the kernel, in-process — no HTTP loopback
 
-    # Local Kokoro TTS (ONNX, no API key). Model files auto-download to
-    # ~/.cache/pipecat/kokoro-onnx/ unless the paths point at an install.
-    tts = KokoroTTSService(
-        model_path=settings.kokoro_model_path,
-        voices_path=settings.kokoro_voices_path,
-        settings=KokoroTTSService.Settings(
-            voice=settings.tts_voice,
-            language=_language(settings.language),
-        ),
-    )
+    tts = _build_tts(settings)
 
     # Lity keeps conversation memory server-side; each turn just carries the
     # latest user utterance, so the context starts empty.
