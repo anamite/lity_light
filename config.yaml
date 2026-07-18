@@ -3,6 +3,25 @@ name: Lity
 workspace: ./workspace
 database: ./data/lity.db
 
+user:
+  # The human side of the clock. Re-read live — no restart.
+  timezone: ""                 # IANA name, e.g. Europe/Berlin; blank = system tz.
+                               # Governs the kernel's clock, daily:/weekly:
+                               # schedules, goal reviews and reflection time.
+  quiet_hours: ""              # e.g. "23:00-07:30" (local; overnight OK).
+                               # During quiet hours nothing is spoken aloud and
+                               # the heartbeat rests; proactive messages land
+                               # silently in the UI for the morning. Blank = off.
+
+reflection:
+  # Nightly reflection (utility model, runs once per night at `time`):
+  # 1) memory consolidation — archives duplicate/superseded memories, writes
+  #    merged replacements (never deletes); 2) day review — digests the last
+  #    24h and wakes the kernel if something deserves a follow-up (a goal,
+  #    a schedule, a memory). Re-read live.
+  enabled: true
+  time: "03:30"                # user-local; ideally inside quiet_hours
+
 provider:
   base_url: https://api.openai.com/v1         # swap to http://localhost:11434/v1 for Ollama
   api_key_env: OPENAI_API_KEY                 # key itself lives in .env / environment
@@ -99,6 +118,32 @@ gcal:
   inject_daily: always         # always = today's events in the assistant's context
                                # every turn | on_demand = fetched only via the tool
   timezone: ""                 # IANA name, e.g. Europe/Berlin; blank = system tz
+
+env:
+  # Environment awareness — Lity's senses (and hands) in the physical world.
+  # A hub of drivers polled every poll_seconds; the latest snapshot feeds the
+  # heartbeat and the `environment` tool, driver alerts and watched state
+  # CHANGES wake the kernel as system events. Section is re-read live — no
+  # restart. Future drivers (zigbee2mqtt direct, desk motor, display, email
+  # watcher) plug into lity/modules/env.py with the same shape.
+  poll_seconds: 60
+  system:                      # this machine (the Pi): always on, read-only
+    enabled: true
+    disk_alert_percent: 90     # alert when the disk is this % full
+    temp_alert_c: 80           # alert when the CPU reaches this temperature
+  homeassistant:
+    # Home Assistant = eyes and hands for the smart home: the Zigbee mesh
+    # (ZHA / zigbee2mqtt), lights, switches, sensors, locks... Create a
+    # long-lived access token in HA (your profile -> Security), put it in
+    # .env as HASS_TOKEN, set base_url, flip enabled.
+    enabled: false
+    base_url: http://homeassistant.local:8123
+    token_env: HASS_TOKEN
+    watch: []                  # entity ids or prefixes ("light.") to observe;
+                               # [] = lights, switches, binary_sensors, locks,
+                               # climate, media_players, persons, covers
+    announce: []               # entities whose state CHANGES wake the kernel,
+                               # e.g. ["binary_sensor.front_door", "person."]
 
 telegram:
   # Telegram bridge. Create a bot with @BotFather, put its token in .env as

@@ -13,9 +13,11 @@ from .gateway.events import EventBus
 from .kernel import Kernel
 from .llm import LLM
 from .memory import Memory
+from .modules.env import Environment
 from .modules.gcal import GoogleCalendar
 from .modules.telegram import Telegram
 from .quick import Quick
+from .reflect import Reflection
 from .sched.scheduler import Scheduler
 from .skills import Skills
 from .voice import VoiceChannel
@@ -36,11 +38,14 @@ class App:
         self.quick = Quick(self)
         self.gcal = GoogleCalendar(self)
         self.telegram = Telegram(self)
+        self.env = Environment(self)
+        self.reflect = Reflection(self)
         self.scheduler = Scheduler(self)
         self.voice = VoiceChannel(self)
         self._scheduler_task: asyncio.Task | None = None
         self._voice_task: asyncio.Task | None = None
         self._telegram_task: asyncio.Task | None = None
+        self._env_task: asyncio.Task | None = None
 
     async def start(self):
         tools.load_all()
@@ -55,6 +60,8 @@ class App:
         self._scheduler_task = asyncio.create_task(self.scheduler.run())
         # idles until telegram: is configured (live config) — no restart needed
         self._telegram_task = asyncio.create_task(self.telegram.run())
+        # environment hub: polls drivers, feeds heartbeat, wakes kernel on alerts
+        self._env_task = asyncio.create_task(self.env.run())
         if self.cfg.get_path("voice.enabled", False):
             from . import voicebot  # deferred: voice deps are optional
             self._voice_task = asyncio.create_task(voicebot.run(self))
@@ -68,6 +75,8 @@ class App:
             self._scheduler_task.cancel()
         if self._telegram_task:
             self._telegram_task.cancel()
+        if self._env_task:
+            self._env_task.cancel()
         await self.quick.shutdown()
         await self.llm.close()
         await self.db.close()

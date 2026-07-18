@@ -22,6 +22,10 @@ class Kernel:
         go back out to Telegram. Voice and event turns change nothing here."""
         if source in ("text", "telegram"):
             self.app.voice.note_text_reply(mid)
+        # quiet hours: proactive (event-sourced) replies are never spoken —
+        # they land silently in the UI and wait for the morning
+        if source == "event" and context.quiet_now(self.app):
+            self.app.voice.mute(mid)
         if source == "telegram":
             self.app.telegram.reply_bg(text)
 

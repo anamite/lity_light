@@ -108,6 +108,11 @@ class VoiceChannel:
         if not self.speak_text_replies:
             self._ui_delivered.add(mid)
 
+    def mute(self, mid: int):
+        """This message must never be spoken (quiet hours): it stays on screen,
+        the cursor advances past it like any delivered reply."""
+        self._ui_delivered.add(mid)
+
     async def _max_msg_id(self) -> int:
         row = await self.app.db.fetchone(
             "SELECT COALESCE(MAX(id),0) AS m FROM messages WHERE thread_id=?",

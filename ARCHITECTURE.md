@@ -123,6 +123,9 @@ drop-in — the `llm.py` provider is OpenAI-compatible, so pointing
 | `update_user_profile(fact)` | 2 | Maintain USER.md |
 | `send_file(path, caption)` | 0 | Post a workspace file into the chat |
 | `capabilities()` | 0 | Live self-inspection sheet (Hermes status, tools, schedules, skills) |
+| `environment()` | 0 | Live snapshot of the physical environment (system health + smart home) |
+| `env_act(target, action)` | 3 | Switch a smart-home device on/off/toggle (Home Assistant entity) |
+| `goal(action, ...)` | 2 | Long-horizon goal board: add/update/done/drop/list, with review times |
 
 Anything beyond this (run code, browse, shell, research, documents, email,
 calendar, connecting new services) is *by construction* a delegation — the
@@ -241,6 +244,55 @@ retrieval is keyword FTS; skills are text, not executable procedures.
   zero cost to the kernel. The last 5 heartbeat reports are fed back as
   ALREADY REPORTED to prevent repeats.
 
+## 7a. Environment layer — senses, hands, and goals
+
+`lity/modules/env.py` is a hub of small **drivers**, each owning one slice of
+the physical world; `env:` in config.yaml, re-read live:
+
+- **system** (always on): this machine's disk / memory / load / CPU
+  temperature. Threshold alerts (disk %, temp °C) wake the kernel as system
+  events, cooled down to once an hour per alert.
+- **homeassistant** (opt-in): Home Assistant REST bridge — every HA entity
+  (the Zigbee mesh via ZHA/zigbee2mqtt, lights, switches, sensors, locks…)
+  is observable, and `env_act` calls `homeassistant.turn_on/off/toggle` on
+  any of them. `watch:` selects what enters the snapshot (default: the
+  useful domains, capped at 60 entities); `announce:` lists entities whose
+  state *changes* wake the kernel (opt-in, so chatty sensors can't spam it).
+
+Future drivers (zigbee2mqtt/MQTT direct, desk motor, display, email watcher)
+implement the same four methods — `enabled() / poll() / owns() / act()` —
+and append themselves to `Environment.drivers`; nothing else changes.
+
+The latest snapshot feeds three places: the `environment` tool, the
+heartbeat's state block (so HEARTBEAT.md checks can reference real sensor
+values), and — for alerts/changes — `kernel.system_event`, i.e. the kernel
+wakes up and can act (delegate, env_act, message the user, or NO_REPLY).
+
+**Goals** (`goals` table + `goal` tool) give the proactivity a subject:
+long-horizon follow-ups the kernel pursues across days. Active goals render
+into their own system-prompt slot every turn; a goal's `review_at` fires
+deterministically in the scheduler (like a timer), clearing the slot and
+waking the kernel with "[goal review due]" — the kernel acts, then either
+sets the next review or closes the goal.
+
+## 7b. User time, quiet hours, nightly reflection
+
+- **`user.timezone`** (IANA, blank = system tz) governs the kernel's `## Now`
+  clock, `daily:`/`weekly:` schedule specs, and goal review times — specs are
+  wall-clock local, stored as UTC (`crons.next_run(spec, tz=...)`).
+- **`user.quiet_hours`** ("23:00-07:30", overnight OK): while active, nothing
+  proactive is spoken aloud (event-sourced replies are muted on the voice
+  channel but stay visible in the UI) and the heartbeat rests. Environment
+  alerts and schedules still fire — their output just lands silently.
+- **Nightly reflection** (`lity/reflect.py`, `reflection:` config): once per
+  night at a user-local time, two utility-model passes — (1) memory
+  consolidation: archive duplicates/superseded facts, write merged
+  replacements, re-export MEMORY.md; (2) day review: digest the last 24h
+  (messages, finished tasks, goals, new memories) and wake the kernel if
+  anything deserves follow-up, which the kernel may turn into a goal, a
+  schedule, a memory — or NO_REPLY. Last-run date persists in the `kv`
+  table, so restarts never double-run it.
+
 ## 8. Permissions & restriction levels
 
 Five levels; `autonomy_level` in config.yaml (default 2) auto-approves at or
@@ -273,6 +325,8 @@ skills     (id, agent, name, description, content, uses, archived, ...)
 tasks      (id, agent='hermes', thread_id, parent_thread_id, status, task,
             result, tokens_used, created_at, finished_at)
 schedules  (id, kind, spec, prompt, thread_id, next_run, last_run, enabled)
+goals      (id, title, detail, status active|done|dropped, review_at, ...)
+kv         (key PK, value — tiny persistent flags, e.g. reflection.last_date)
 approvals  (id, tool, args_json, level, task_id, thread_id, run_id,
             status, created_at, decided_at)
 ```

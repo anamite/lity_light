@@ -144,6 +144,22 @@ CREATE TABLE IF NOT EXISTS qtimers (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY,                      -- tiny persistent flags
+    value TEXT NOT NULL                        --   (e.g. reflection.last_date)
+);
+
+CREATE TABLE IF NOT EXISTS goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',     -- active | done | dropped
+    review_at TEXT,                            -- UTC; when due, a system event
+                                               --   wakes the kernel to act on it
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS approvals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool TEXT NOT NULL,
@@ -207,6 +223,15 @@ class DB:
     async def fetchall(self, sql: str, params: tuple = ()):
         cur = await self.conn.execute(sql, params)
         return await cur.fetchall()
+
+    async def get_kv(self, key: str, default: str | None = None) -> str | None:
+        row = await self.fetchone("SELECT value FROM kv WHERE key=?", (key,))
+        return row["value"] if row else default
+
+    async def set_kv(self, key: str, value: str):
+        await self.execute(
+            "INSERT INTO kv(key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
 
     # ── domain helpers ────────────────────────────────────────────────────
     async def add_message(self, thread_id: int, role: str, content: str,

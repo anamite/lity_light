@@ -3,6 +3,7 @@ this file is why the main thread can eventually run on a small local model."""
 
 import base64
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,7 +19,11 @@ and the user says stop, call timer with action stop_ringing), quick notes
 (`note`), shopping lists (`shopping`), weather (`weather`), speaker volume
 (`volume`: get/set/up/down/mute — "louder"/"quieter" means this), Google
 Calendar (`calendar`: agenda/add/update/delete; not connected yet? its
-setup action returns a manual — walk the user through it), and the current
+setup action returns a manual — walk the user through it), the physical
+environment (`environment` = live snapshot of this machine + smart-home
+sensors/devices; `env_act` = switch a device on/off), your goal board
+(`goal`: long-horizon follow-ups you pursue across days — add one whenever
+something deserves a later check-in), and the current
 time/date (already in '## Now' — answer directly, no tool). Do it AUTOMATICALLY: the user never has to say "use
 Hermes" or name an executor; that routing is your job. Write the task
 complete and self-contained (Hermes has none of this conversation).
@@ -51,6 +56,44 @@ again. If several approvals are pending, work through them in ONE
 conversation: after one is decided, immediately offer the next."""
 
 
+# ── user time context: timezone + quiet hours ───────────────────────────────
+# `user:` in config.yaml, re-read live. Used by the kernel clock, daily/weekly
+# schedules, goal reviews, the heartbeat and the nightly reflection.
+
+def user_tz(app):
+    """The user's tzinfo: user.timezone (IANA) if set, else the system zone."""
+    from .modules import modules_cfg
+    name = str((modules_cfg(app, "user") or {}).get("timezone") or "").strip()
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    return datetime.now().astimezone().tzinfo
+
+
+def user_now(app) -> datetime:
+    return datetime.now(user_tz(app))
+
+
+def quiet_now(app) -> bool:
+    """True inside user.quiet_hours ('23:00-07:30', user-local; overnight
+    ranges fine). During quiet hours nothing is spoken aloud and the heartbeat
+    rests — proactive messages still land silently in the UI for the morning."""
+    from .modules import modules_cfg
+    spec = str((modules_cfg(app, "user") or {}).get("quiet_hours") or "").strip()
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", spec)
+    if not m:
+        return False
+    start, end = int(m[1]) * 60 + int(m[2]), int(m[3]) * 60 + int(m[4])
+    if start == end:
+        return False
+    now = user_now(app)
+    cur = now.hour * 60 + now.minute
+    return start <= cur < end if start < end else (cur >= start or cur < end)
+
+
 def _read(path: Path, cap: int) -> str:
     try:
         text = path.read_text(encoding="utf-8").strip()
@@ -81,8 +124,9 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
     summary_block = f"## Earlier in this thread (summary)\n{summary_row['content'][:slot]}" if summary_row else ""
 
     tasks_block = await _task_board(app, slot)
+    goals_block = await _goal_board(app, slot // 2)
 
-    now_local = datetime.now().astimezone()
+    now_local = user_now(app)
     clock = (f"## Now\n{now_local.strftime('%A, %Y-%m-%d %H:%M')} local time "
              f"({now_local.tzname()}).")
 
@@ -91,7 +135,7 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
     cal_block = await app.gcal.system_block(slot // 2)
 
     parts = [soul, user_md, clock, cal_block, DELEGATION_POLICY, tasks_block,
-             mem_block, summary_block]
+             goals_block, mem_block, summary_block]
     return "\n\n".join(p for p in parts if p)
 
 
@@ -115,6 +159,20 @@ def _age(ts: str) -> str:
     if secs < 3600:
         return f"{secs // 60}m"
     return f"{secs // 3600}h"
+
+
+async def _goal_board(app, slot: int) -> str:
+    """Active long-horizon goals — always visible so the kernel keeps pursuing
+    them; managed with the goal tool, reviews fired by the scheduler."""
+    rows = await app.db.fetchall(
+        "SELECT id, title, review_at FROM goals WHERE status='active' ORDER BY id LIMIT 6")
+    if not rows:
+        return ""
+    lines = [f"#{r['id']} {r['title'][:70]}"
+             + (f" · review {r['review_at']} UTC" if r["review_at"] else "")
+             for r in rows]
+    return ("## Goals I'm pursuing (long-horizon — manage via goal tool)\n"
+            + "\n".join(lines))[:slot]
 
 
 async def _task_board(app, slot: int) -> str:

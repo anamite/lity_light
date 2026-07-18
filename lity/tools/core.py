@@ -10,6 +10,7 @@ KERNEL_TOOLS = [
     "update_user_profile", "send_file", "capabilities", "offer_approval_options",
     "timer", "note", "shopping", "weather", "volume", "calendar", "speech_mode",
     "telegram",
+    "environment", "env_act", "goal",
 ]
 
 
@@ -164,14 +165,16 @@ async def cancel_task(ctx, args):
 
 @tool("schedule",
       "Set a timer or recurring job. spec formats: 'in:45s' / 'in:10m' / 'in:2h' (one-shot timer), "
-      "'every:12s' (seconds OK, min 5s) / 'every:30m', 'daily:09:00', 'weekly:mon:09:00' (UTC). "
+      "'every:12s' (seconds OK, min 5s) / 'every:30m', 'daily:09:00', 'weekly:mon:09:00' "
+      "(daily/weekly are in the USER'S local time). "
       "The prompt is executed in this thread when due.",
       params({"spec": {"type": "string"}, "prompt": {"type": "string"}}), level=2)
 async def schedule(ctx, args):
+    from ..context import user_tz
     from ..sched.crons import next_run, spec_kind
     try:
         kind = spec_kind(args["spec"])
-        nxt = next_run(args["spec"])
+        nxt = next_run(args["spec"], tz=user_tz(ctx.app))
     except ValueError as e:
         return f"Bad spec: {e}"
     sid = await ctx.app.db.execute(
@@ -244,12 +247,13 @@ async def capabilities(ctx, args):
         if t:
             lines.append(f"- {t.name}: {t.description}")
     lines.append("\n## External modules\n- " + ctx.app.gcal.status()
-                 + "\n- " + ctx.app.telegram.status())
+                 + "\n- " + ctx.app.telegram.status()
+                 + "\n- " + ctx.app.env.status())
     from ..sched.crons import MIN_EVERY_SECONDS
     lines.append(
         "\n## Scheduling\n"
         f"- one-shot: in:45s / in:10m / in:2h · recurring: every:12s (min {MIN_EVERY_SECONDS}s) / "
-        "every:30m / daily:09:00 / weekly:mon:09:00 (UTC)\n"
+        "every:30m / daily:09:00 / weekly:mon:09:00 (daily/weekly in the user's local time)\n"
         "- fires with roughly second-level precision; the prompt runs in the scheduling thread")
     n = await ctx.app.db.fetchone("SELECT COUNT(*) AS c FROM skills WHERE archived=0")
     top = await ctx.app.db.fetchall(

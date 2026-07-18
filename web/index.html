@@ -71,6 +71,7 @@
         border:1px solid var(--line-soft);
         font-size:11.5px;color:var(--dim);cursor:pointer;transition:border-color .15s,transform .1s}
   .task:hover{border-color:var(--accent-dim);transform:translateY(-1px)}
+  .task.active{border-color:var(--accent-dim);background:var(--panel3)}
   .task b{color:var(--text);font:600 12px var(--font-ui)}
   .st-running{color:var(--warn)} .st-done{color:var(--ok)} .st-failed{color:var(--bad)}
   .st-blocked{color:var(--bad);font-weight:700}
@@ -286,6 +287,7 @@ async function loadThreads(){
   threads = await api('/threads');
   const box = $('#threads'); box.innerHTML = '';
   for(const t of threads){
+    if(t.kind==='agent') continue;  // task threads live in the Tasks section only
     const d = document.createElement('div');
     d.className = 'thread kind-'+t.kind + (t.id===current?' active':'');
     if(t.id===1){
@@ -295,11 +297,6 @@ async function loadThreads(){
     const label = document.createElement('span');
     label.className = 'thread-label'; label.textContent = t.title;
     d.appendChild(label);
-    if(t.kind==='agent'){
-      const badge = document.createElement('span');
-      badge.className = 'badge'; badge.textContent = 'agent';
-      d.appendChild(badge);
-    }
     d.onclick = () => { closeSettings(); openThread(t.id); };
     box.appendChild(d);
   }
@@ -316,13 +313,14 @@ async function openThread(id){
   const log = $('#log'); log.innerHTML = '';
   msgs.forEach(m => log.appendChild(msgEl(m)));
   await renderPendingApprovals();  // pending approvals survive reloads & thread switches
-  loadThreads(); scroll();
+  loadThreads(); loadTasks(); scroll();
 }
 async function loadTasks(){
   const tasks = await api('/tasks');
   const box = $('#tasks'); box.innerHTML = '';
   for(const t of tasks.slice(0,12)){
-    const d = document.createElement('div'); d.className='task';
+    const d = document.createElement('div');
+    d.className = 'task' + (t.thread_id===current?' active':'');
     d.innerHTML = `<b>#${t.id} ${t.agent}</b> <span class="st-${t.status}">${t.status}</span><br>${t.task.slice(0,60)}`;
     d.onclick = () => { closeSettings(); openThread(t.thread_id); };
     box.appendChild(d);

@@ -5,6 +5,7 @@ heartbeat uses only the cheap utility model and discards 'all clear' ticks."""
 import asyncio
 from datetime import datetime, timezone
 
+from ..context import quiet_now, user_tz
 from .crons import FMT, next_run
 
 HEARTBEAT_SYSTEM = """You are the heartbeat of a personal agent. Below are the user's standing
@@ -26,6 +27,7 @@ class Scheduler:
             try:
                 await self._fire_due()
                 await self._maybe_heartbeat()
+                await self.app.reflect.maybe_run()
             except Exception:
                 pass  # the scheduler must survive anything
             await asyncio.sleep(await self._next_sleep(tick))
@@ -55,15 +57,32 @@ class Scheduler:
             else:
                 await self.app.db.execute(
                     "UPDATE schedules SET last_run=?, next_run=? WHERE id=?",
-                    (now, next_run(r["spec"]), r["id"]))
+                    (now, next_run(r["spec"], tz=user_tz(self.app)), r["id"]))
             self.app.bus.emit("schedule.fired", schedule_id=r["id"], spec=r["spec"])
             asyncio.create_task(self.app.kernel.system_event(
                 r["thread_id"], f"[scheduled job #{r['id']} fired — {r['spec']}] {r['prompt']}"))
+        # goal reviews fire deterministically, like timers: the review slot is
+        # cleared and the kernel is woken to decide what happens next
+        goals = await self.app.db.fetchall(
+            "SELECT id, title, detail FROM goals "
+            "WHERE status='active' AND review_at IS NOT NULL AND review_at<=?", (now,))
+        for g in goals:
+            await self.app.db.execute(
+                "UPDATE goals SET review_at=NULL, updated_at=datetime('now') WHERE id=?",
+                (g["id"],))
+            asyncio.create_task(self.app.kernel.system_event(
+                1, f"[goal review due] #{g['id']} {g['title']}"
+                   + (f" — {g['detail'][:200]}" if g["detail"] else "") +
+                   " Act on it now (delegate, check state, or tell the user), then either "
+                   "set the next review via goal(action='update', review=...) or close it "
+                   "with goal done/drop."))
 
     async def _maybe_heartbeat(self):
         cfg = self.app.cfg
         if not cfg.get_path("heartbeat.enabled", True):
             return
+        if quiet_now(self.app):
+            return  # the heartbeat rests during quiet hours (env alerts still fire)
         interval = int(cfg.get_path("heartbeat.interval_minutes", 30)) * 60
         now = datetime.now(timezone.utc)
         if self._last_heartbeat and (now - self._last_heartbeat).total_seconds() < interval:
@@ -77,6 +96,8 @@ class Scheduler:
             "WHERE status IN ('running','failed') ORDER BY id DESC LIMIT 10")
         sched = await self.app.db.fetchall(
             "SELECT id, spec, prompt, next_run FROM schedules WHERE enabled=1 LIMIT 10")
+        goals = await self.app.db.fetchall(
+            "SELECT id, title, review_at FROM goals WHERE status='active' LIMIT 8")
         reported = await self.app.db.fetchall(
             "SELECT content FROM messages WHERE thread_id=1 AND role='event' "
             "AND content LIKE '[heartbeat]%' ORDER BY id DESC LIMIT 5")
@@ -86,7 +107,11 @@ class Scheduler:
                  "\n".join(f"#{t['id']} {t['agent']} {t['status']} since {t['created_at']}: {t['task'][:80]}"
                            for t in tasks) + "\n\nSCHEDULES:\n" +
                  "\n".join(f"#{s['id']} {s['spec']} next {s['next_run']}: {s['prompt'][:60]}"
-                           for s in sched) +
+                           for s in sched) + "\n\nACTIVE GOALS:\n" +
+                 "\n".join(f"#{g['id']} {g['title'][:70]}"
+                           + (f" (review {g['review_at']})" if g["review_at"] else "")
+                           for g in goals) + "\n\nENVIRONMENT (latest observations):\n" +
+                 self.app.env.snapshot_text(800) +
                  f"\n\nCURRENT TIME (UTC): {now.strftime(FMT)}")
         try:
             verdict = await self.app.llm.complete(
