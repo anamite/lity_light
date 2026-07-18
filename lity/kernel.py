@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from . import context
 from .db import dumps
-from .tools import ToolContext, openai_schema, run_tool
+from .tools import INTERNAL, ToolContext, openai_schema, run_tool
 from .tools.core import KERNEL_TOOLS
 
 
@@ -73,6 +73,11 @@ class Kernel:
                         args = {}
                     direct = bool(args.pop("direct_to_user", False))
                     result = await run_tool(ctx, name, args)
+                    if result.startswith(INTERNAL):
+                        # model-only content (manuals, capability sheets) — never
+                        # deliverable raw, whatever direct_to_user said
+                        result = result[len(INTERNAL):]
+                        direct = False
                     if direct and not result.startswith(("Denied", "Error")):
                         # tool output goes straight to the user — no extra model step
                         await self.app.db.add_message(thread_id, "assistant", result)

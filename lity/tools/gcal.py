@@ -1,7 +1,7 @@
 """The Google Calendar kernel tool — thin dispatcher over app.gcal
 (lity/modules/gcal.py), same pattern as the quick tools."""
 
-from . import params, tool
+from . import INTERNAL, params, tool
 
 
 @tool("calendar",
@@ -29,13 +29,16 @@ from . import params, tool
 async def calendar(ctx, args):
     g = ctx.app.gcal
     a = str(args.get("action") or "").lower()
+    # setup/status are INTERNAL reference docs — the marker makes the kernel
+    # refuse raw delivery; the model must relay them in its own words.
     if a == "setup":
-        return g.setup_manual()
+        return INTERNAL + g.setup_manual()
     if a == "status":
-        return g.status()
+        return INTERNAL + g.status()
     if not g.configured:
-        return ("Google Calendar isn't connected yet. Offer to walk the user through "
-                "setup — call calendar(action='setup') for the manual. " + g.status())
+        return INTERNAL + ("Google Calendar isn't connected yet. Offer to walk the user "
+                           "through setup — call calendar(action='setup') for the manual. "
+                           + g.status())
     try:
         if a == "agenda":
             return await g.agenda(args.get("day"))

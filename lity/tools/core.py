@@ -197,8 +197,8 @@ async def update_user_profile(ctx, args):
       "INTERNAL reference — read it, then answer the user in your own words.",
       params({}, required=[]), level=0)
 async def capabilities(ctx, args):
-    from . import REGISTRY
-    lines = ["# What I can do", ""]
+    from . import INTERNAL, REGISTRY
+    lines = [INTERNAL + "# What I can do", ""]
     hermes = ctx.app.runner.hermes
     if hermes.enabled:
         lines.append(

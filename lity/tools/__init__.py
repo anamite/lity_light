@@ -42,6 +42,12 @@ def params(props: dict, required: list[str] | None = None) -> dict:
     return {"type": "object", "properties": props, "required": required or list(props)}
 
 
+# Prefix for tool results meant for the MODEL's eyes only (setup manuals,
+# capability sheets). The kernel strips it and REFUSES direct_to_user delivery
+# for marked results, no matter what the model requested — the guard against
+# internal docs leaking verbatim into the chat/voice channel.
+INTERNAL = "[[internal]] "
+
 DIRECT_PARAM = {
     "type": "boolean",
     "description": "Set true to deliver this tool's raw output straight to the user as your "
