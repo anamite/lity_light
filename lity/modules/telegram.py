@@ -10,6 +10,11 @@ What it does once configured (enabled + chat_id in config.yaml, bot token in
             buttons; a tap runs the same approvals.resolve() path as the web
             UI and voice, and the card updates with the outcome wherever the
             decision was made.
+  alarms    when telegram.forward_alarms is true, a fired timer/alarm also
+            appears in Telegram with a Stop button; a tap silences it via the
+            same quick.stop_ringing() path as voice and the web UI, and the
+            card updates with the outcome however it ends (stopped, missed,
+            cancelled).
   inbound   text messages from the owner's chat run a normal kernel turn in
             the Home thread, stored as "[via Telegram] …"; the reply goes
             back to Telegram (and the web UI) but is NOT spoken (same
@@ -40,6 +45,7 @@ class Telegram:
     def __init__(self, app):
         self.app = app
         self._cards: dict[int, tuple[int, str]] = {}  # approval id -> (msg id, tool)
+        self._timer_cards: dict[int, tuple[int, str]] = {}  # qtimer id -> (msg id, text)
 
     # ── config / status ─────────────────────────────────────────────────────
     def cfg(self) -> dict:
@@ -65,8 +71,10 @@ class Telegram:
         missing = [n for n, ok in checks if not ok]
         if not missing:
             fwd = c.get("forward_approvals", True)
+            alarms = c.get("forward_alarms", True)
             return (f"Telegram: READY (chat {c.get('chat_id')}, approval forwarding "
-                    f"{'on' if fwd else 'off'}). Messages from the user there arrive "
+                    f"{'on' if fwd else 'off'}, alarm forwarding {'on' if alarms else 'off'}). "
+                    "Messages from the user there arrive "
                     "tagged [via Telegram]; replies go back silently.")
         return ("Telegram: NOT ready — missing: " + "; ".join(missing)
                 + ". The telegram tool's setup action has the manual.")
@@ -85,7 +93,7 @@ Step 2 — give Lity the token (on the Lity machine):
 Step 3 — pair the chat. EASIEST: run  ./lityctl setup  → step 6 → enable Telegram: the wizard waits while the user sends any message to their new bot and captures the chat id automatically. Manual alternative: message @userinfobot for their id, then ./lityctl set telegram.chat_id THE_ID
   Finally: ./lityctl set telegram.enabled true
 
-Step 4 — verify: within ~5 seconds Lity starts polling. The user sends the bot "hello" — it should get a reply. Approval requests now also appear there with decision buttons (turn off with ./lityctl set telegram.forward_approvals false).
+Step 4 — verify: within ~5 seconds Lity starts polling. The user sends the bot "hello" — it should get a reply. Approval requests now also appear there with decision buttons (turn off with ./lityctl set telegram.forward_approvals false), and fired timers/alarms arrive with a Stop button (turn off with ./lityctl set telegram.forward_alarms false).
 
 CURRENT STATUS: {self.status()}"""
 
@@ -191,6 +199,26 @@ CURRENT STATUS: {self.status()}"""
             "chat_id": str(self.cfg().get("chat_id") or ""), "message_id": mid,
             "text": f"{icon} Approval #{approval_id} (`{tool}`) — {status}."})
 
+    # ── alarm / timer cards ─────────────────────────────────────────────────
+    async def _send_timer_card(self, tid: int, kind: str, label: str):
+        text = f"⏰ {kind.capitalize()} #{tid} '{label}' is ringing!"
+        markup = {"inline_keyboard": [[
+            {"text": "🔕 Stop", "callback_data": f"tmr:{tid}:stop"}]]}
+        mid = await self.send_message(text, reply_markup=markup)
+        if mid:
+            self._timer_cards[tid] = (mid, text)
+
+    async def _close_timer_card(self, tid: int, status: str):
+        card = self._timer_cards.pop(tid, None)
+        if not card:
+            return
+        mid, text = card
+        outcome = {"done": "✅ stopped", "missed": "🔇 auto-silenced (missed)",
+                   "cancelled": "🚫 cancelled"}.get(status, status)
+        await self._api("editMessageText", {
+            "chat_id": str(self.cfg().get("chat_id") or ""), "message_id": mid,
+            "text": f"{text.rstrip('!')} — {outcome}."})
+
     # ── inbound ─────────────────────────────────────────────────────────────
     async def _handle_update(self, u: dict):
         chat_ok = lambda c: str((c or {}).get("id", "")) == str(self.cfg().get("chat_id") or "")
@@ -219,8 +247,10 @@ CURRENT STATUS: {self.status()}"""
             if len(parts) == 3 and parts[0] == "apr":
                 ok = await self.app.approvals.resolve(int(parts[1]), parts[2])
                 note = f"Registered: {parts[2]}" if ok else "No longer pending."
+            elif len(parts) == 3 and parts[0] == "tmr" and parts[2] == "stop":
+                note = await self.app.quick.stop_ringing(only_id=int(parts[1]))
             await self._api("answerCallbackQuery", {
-                "callback_query_id": cq.get("id"), "text": note})
+                "callback_query_id": cq.get("id"), "text": note[:200]})
 
     # ── the long-running loops ──────────────────────────────────────────────
     async def run(self):
@@ -272,6 +302,15 @@ CURRENT STATUS: {self.status()}"""
                     elif ev.get("type") == "approval.resolved":
                         await self._mark_resolved(int(ev.get("id", 0)),
                                                   str(ev.get("status", "")))
+                    elif ev.get("type") == "timer.updated":
+                        status = str(ev.get("status", ""))
+                        if (status == "ringing"
+                                and self.cfg().get("forward_alarms", True)):
+                            await self._send_timer_card(
+                                int(ev["id"]), str(ev.get("kind", "timer")),
+                                str(ev.get("label", "")))
+                        elif status in ("done", "missed", "cancelled"):
+                            await self._close_timer_card(int(ev["id"]), status)
                 except Exception as e:
                     log.warning(f"telegram event handling failed: {e}")
         finally:

@@ -165,6 +165,7 @@ telegram:
   enabled: false
   chat_id: ""                  # your personal chat with the bot (wizard fills this)
   forward_approvals: true      # approval requests also appear there with decision buttons
+  forward_alarms: true         # fired timers/alarms also appear there with a Stop button
 
 server:
   host: 0.0.0.0

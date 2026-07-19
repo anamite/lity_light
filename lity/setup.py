@@ -354,6 +354,8 @@ def wizard():
                 config_set("telegram.chat_id", val)
         print("   Approval requests will show up there with decision buttons "
               "(disable: ./lityctl set telegram.forward_approvals false).")
+        print("   Fired timers/alarms will show up there with a Stop button "
+              "(disable: ./lityctl set telegram.forward_alarms false).")
 
     print("\n── saved. Review anytime with:  ./lityctl show")
     show()
@@ -384,7 +386,8 @@ def show():
     if t.get("enabled"):
         print("telegram :", f"enabled (chat: {t.get('chat_id') or 'NOT PAIRED'}, "
               f"token: {'set' if env.get('TELEGRAM_BOT_TOKEN') else 'MISSING'}, "
-              f"approval buttons: {'on' if t.get('forward_approvals', True) else 'off'})")
+              f"approval buttons: {'on' if t.get('forward_approvals', True) else 'off'}, "
+              f"alarm buttons: {'on' if t.get('forward_alarms', True) else 'off'})")
     else:
         print("telegram : disabled (module — enable in setup step 6, or ask Lity)")
     print("keys     :")
