@@ -43,6 +43,28 @@ class FileIn(BaseModel):
     content: str
 
 
+class MemoryIn(BaseModel):
+    content: str
+    kind: str = "project"  # user | project | feedback | reference
+
+
+class NoteIn(BaseModel):
+    title: str = ""
+    content: str = ""
+
+
+class ShoppingListIn(BaseModel):
+    title: str
+
+
+class ShoppingItemIn(BaseModel):
+    item: str
+
+
+class ItemDoneIn(BaseModel):
+    done: bool
+
+
 def create_app(core) -> FastAPI:
     api = FastAPI(title="Lity", docs_url="/api/docs")
 
@@ -174,6 +196,119 @@ def create_app(core) -> FastAPI:
     async def memories():
         return rows_to_dicts(await core.db.fetchall(
             "SELECT * FROM memories WHERE archived=0 ORDER BY id DESC LIMIT 200"))
+
+    @api.post("/api/memories", status_code=201)
+    async def create_memory(body: MemoryIn):
+        content = body.content.strip()
+        if not content:
+            raise HTTPException(400, "memory content is empty")
+        mid = await core.memory.save(content, body.kind)
+        return {"id": mid}
+
+    @api.put("/api/memories/{memory_id}")
+    async def update_memory(memory_id: int, body: MemoryIn):
+        content = body.content.strip()
+        if not content:
+            raise HTTPException(400, "memory content is empty")
+        row = await core.db.fetchone(
+            "SELECT id FROM memories WHERE id=? AND archived=0", (memory_id,))
+        if not row:
+            raise HTTPException(404, "no such memory")
+        await core.db.execute(
+            "UPDATE memories SET content=?, kind=? WHERE id=?",
+            (content, body.kind, memory_id))
+        return {"status": "ok"}
+
+    @api.delete("/api/memories/{memory_id}")
+    async def delete_memory(memory_id: int):
+        await core.db.execute("UPDATE memories SET archived=1 WHERE id=?", (memory_id,))
+        return {"status": "ok"}
+
+    # ── modules dashboard: shopping · notes · timers/alarms ──────────────
+    @api.get("/api/modules")
+    async def modules():
+        lists = rows_to_dicts(await core.db.fetchall(
+            "SELECT * FROM shopping_lists ORDER BY id"))
+        items = rows_to_dicts(await core.db.fetchall(
+            "SELECT * FROM shopping_items ORDER BY done, id"))
+        for lst in lists:
+            lst["items"] = [i for i in items if i["list_id"] == lst["id"]]
+        notes = rows_to_dicts(await core.db.fetchall(
+            "SELECT * FROM notes ORDER BY id DESC LIMIT 100"))
+        timers = rows_to_dicts(await core.db.fetchall(
+            "SELECT * FROM qtimers WHERE status IN ('pending','ringing') ORDER BY fires_at"))
+        return {"shopping": lists, "notes": notes, "timers": timers,
+                "now": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())}
+
+    @api.post("/api/shopping", status_code=201)
+    async def create_shopping_list(body: ShoppingListIn):
+        title = body.title.strip()[:60]
+        if not title:
+            raise HTTPException(400, "list title is empty")
+        lid = await core.db.execute(
+            "INSERT INTO shopping_lists(title) VALUES (?)", (title,))
+        return {"id": lid}
+
+    @api.delete("/api/shopping/{list_id}")
+    async def delete_shopping_list(list_id: int):
+        await core.db.execute("DELETE FROM shopping_items WHERE list_id=?", (list_id,))
+        await core.db.execute("DELETE FROM shopping_lists WHERE id=?", (list_id,))
+        return {"status": "ok"}
+
+    @api.post("/api/shopping/{list_id}/items", status_code=201)
+    async def add_shopping_item(list_id: int, body: ShoppingItemIn):
+        item = body.item.strip()[:80]
+        if not item:
+            raise HTTPException(400, "item is empty")
+        row = await core.db.fetchone(
+            "SELECT id FROM shopping_lists WHERE id=?", (list_id,))
+        if not row:
+            raise HTTPException(404, "no such list")
+        iid = await core.db.execute(
+            "INSERT INTO shopping_items(list_id, item) VALUES (?,?)", (list_id, item))
+        return {"id": iid}
+
+    @api.put("/api/shopping/items/{item_id}")
+    async def set_shopping_item(item_id: int, body: ItemDoneIn):
+        await core.db.execute(
+            "UPDATE shopping_items SET done=? WHERE id=?", (int(body.done), item_id))
+        return {"status": "ok"}
+
+    @api.delete("/api/shopping/items/{item_id}")
+    async def delete_shopping_item(item_id: int):
+        await core.db.execute("DELETE FROM shopping_items WHERE id=?", (item_id,))
+        return {"status": "ok"}
+
+    @api.post("/api/notes", status_code=201)
+    async def create_note(body: NoteIn):
+        title = body.title.strip()[:80]
+        content = body.content.strip()[:4000]
+        if not title and not content:
+            raise HTTPException(400, "a note needs a title or some content")
+        if not title:
+            title = content.splitlines()[0][:40]
+        nid = await core.db.execute(
+            "INSERT INTO notes(title, content) VALUES (?,?)", (title, content))
+        return {"id": nid}
+
+    @api.put("/api/notes/{note_id}")
+    async def update_note(note_id: int, body: NoteIn):
+        row = await core.db.fetchone("SELECT id FROM notes WHERE id=?", (note_id,))
+        if not row:
+            raise HTTPException(404, "no such note")
+        await core.db.execute(
+            "UPDATE notes SET title=?, content=?, updated_at=datetime('now') WHERE id=?",
+            (body.title.strip()[:80], body.content.strip()[:4000], note_id))
+        return {"status": "ok"}
+
+    @api.delete("/api/notes/{note_id}")
+    async def delete_note(note_id: int):
+        await core.db.execute("DELETE FROM notes WHERE id=?", (note_id,))
+        return {"status": "ok"}
+
+    @api.delete("/api/timers/{timer_id}")
+    async def cancel_timer(timer_id: int):
+        return {"status": "ok", "message": await core.quick.cancel_timer(timer_id)}
 
     @api.get("/api/schedules")
     async def schedules():
