@@ -158,6 +158,25 @@
   .dash .count{font:600 10.5px var(--font-mono);color:var(--dim);
                background:var(--panel3);padding:2px 8px;border-radius:6px;flex-shrink:0}
   .dash p.hint{color:var(--dim);font-size:12.5px;margin:0 0 12px;line-height:1.6}
+
+  /* ── modules board: one column per module ── */
+  #modules.open{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+  .modcol{flex:1 1 260px;min-width:260px;max-width:430px;background:var(--panel);
+          border:1px solid var(--line-soft);border-radius:var(--radius-lg);
+          padding:14px;display:flex;flex-direction:column;gap:10px;
+          box-shadow:var(--shadow-sm)}
+  .modhead{display:flex;align-items:center;gap:9px;padding-bottom:10px;
+           border-bottom:1px solid var(--line-soft)}
+  .modhead .ic{color:var(--accent-hi);width:17px;height:17px}
+  .modhead b{font:700 14px var(--font-head);color:var(--text-hi);letter-spacing:.2px}
+  .modhead .plus{margin-left:auto;border:1px solid var(--line);border-radius:7px}
+  .modhead .plus:hover{border-color:var(--accent-dim)}
+  .modcol .card{background:var(--panel2)}
+  .modcol .addrow input,.modcol .addrow textarea{background:var(--panel)}
+  .modcol .editbox input,.modcol .editbox textarea{background:var(--panel)}
+  .empty{border:1px dashed var(--line);border-radius:var(--radius);
+         padding:20px 14px;color:var(--dim2);font-size:12.5px;text-align:center;
+         line-height:1.6;white-space:pre-line}
   .cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));
             gap:12px;margin-bottom:10px}
   .card{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius-lg);
@@ -268,6 +287,36 @@
        background:var(--panel3);padding:2px 7px;font:700 11px var(--font-mono);color:var(--dim)}
   .lvl.l3,.lvl.l4{color:var(--warn);background:rgba(232,185,94,.12)}
   .direct{color:var(--ok);font:700 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.4px}
+
+  /* ── config form (dynamic, parsed from yaml) ── */
+  .cfg-subtabs{display:flex;gap:4px;margin-bottom:14px}
+  .cfg-subtabs button{padding:6px 14px;border-radius:7px;border:1px solid var(--line);
+        background:var(--panel2);color:var(--dim);cursor:pointer;font:600 11.5px var(--font-ui)}
+  .cfg-subtabs button.on{background:var(--panel3);color:var(--accent);border-color:var(--accent-dim)}
+  .cfg-section{background:var(--panel);border:1px solid var(--line-soft);border-radius:var(--radius-lg);
+        padding:16px 18px;margin-bottom:16px}
+  .cfg-section .cfg-section{background:var(--panel2);margin-top:12px;margin-bottom:0}
+  .cfg-section > .sec-title{font:700 13.5px var(--font-head);color:var(--text-hi);
+        margin-bottom:4px;letter-spacing:.2px}
+  .cfg-section > .sec-hint{color:var(--dim);font-size:11.5px;margin-bottom:12px;line-height:1.55}
+  .field-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:4px 24px}
+  .field-row{display:flex;flex-direction:column;gap:4px;margin-bottom:14px;min-width:0}
+  .field-row label{font:700 12px var(--font-ui);color:var(--text)}
+  .field-row .field-hint{font-size:11px;color:var(--dim);line-height:1.5}
+  .field-row input[type=text]{background:var(--panel2);
+       border:1px solid var(--line-soft);border-radius:8px;color:var(--text);
+       padding:7px 10px;font:12.5px/1.5 var(--font-mono);width:100%;
+       transition:border-color .15s}
+  .field-row input[type=text]:focus{outline:none;border-color:var(--accent-dim);box-shadow:0 0 0 3px var(--accent-glow)}
+  .boolrow{display:flex;align-items:center;gap:10px}
+  .switch{position:relative;display:inline-block;width:36px;height:21px;flex-shrink:0}
+  .switch input{opacity:0;width:0;height:0;position:absolute}
+  .switch .slider{position:absolute;inset:0;background:var(--panel3);border:1px solid var(--line);
+        border-radius:22px;cursor:pointer;transition:background .15s}
+  .switch .slider::before{content:'';position:absolute;width:15px;height:15px;left:2px;top:2px;
+        background:var(--dim);border-radius:50%;transition:transform .15s,background .15s}
+  .switch input:checked + .slider{background:var(--accent-dim);border-color:var(--accent)}
+  .switch input:checked + .slider::before{transform:translateX(15px);background:var(--text-hi)}
 </style>
 </head>
 <body>
@@ -310,9 +359,18 @@
     </div>
     <div class="pane on" id="pane-config">
       <p class="hint">config.yaml — models, budgets, autonomy level, heartbeat. Applied
-      immediately on save (server host/port need a restart).</p>
-      <textarea class="ed" id="cfg-ed" spellcheck="false"></textarea>
-      <button class="savebtn" onclick="saveConfig()">Save config</button>
+      immediately on save (server host/port need a restart). Parsed live from the file
+      itself, so this stays in sync as settings get added or changed.</p>
+      <div class="cfg-subtabs">
+        <button data-cfgview="form" class="on">Settings</button>
+        <button data-cfgview="raw">Raw YAML</button>
+      </div>
+      <div id="cfg-form-view"></div>
+      <button class="savebtn" id="cfg-form-save" onclick="saveConfigForm()">Save settings</button>
+      <div id="cfg-raw-view" style="display:none">
+        <textarea class="ed" id="cfg-ed" spellcheck="false"></textarea>
+        <button class="savebtn" onclick="saveConfig()">Save raw YAML</button>
+      </div>
     </div>
     <div class="pane" id="pane-files"></div>
     <div class="pane" id="pane-skills"></div>
@@ -515,6 +573,7 @@ const IC = {
   note:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/>',
   db:'<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
   x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  plus:'<path d="M12 5v14"/><path d="M5 12h14"/>',
   edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
 };
 const svgIc = p => `<svg class="ic" viewBox="0 0 24 24">${p}</svg>`;
@@ -555,49 +614,69 @@ function tickCountdowns(){
 }
 setInterval(tickCountdowns, 1000);
 
+function modColumn(icon, title, count, plusTitle){
+  const col = el('div','modcol');
+  const h = el('div','modhead'); h.innerHTML = svgIc(icon);
+  h.appendChild(el('b', null, title));
+  h.appendChild(el('span','count', String(count)));
+  let plus = null;
+  if(plusTitle){
+    plus = iconBtn(IC.plus, plusTitle, true);
+    plus.classList.add('plus');
+    h.appendChild(plus);
+  }
+  col.appendChild(h);
+  return {col, plus};
+}
+
 async function loadModules(){
   if(view!=='modules') return;
   const m = await api('/modules');
   clockSkew = Date.now() - parseUTC(m.now);
   const box = $('#modules'); box.innerHTML = '';
 
-  sectHead(box, IC.timer, 'Timers & Alarms', m.timers.length);
-  if(!m.timers.length){
-    box.appendChild(el('p','hint','Nothing ticking. Ask Lity to “set a timer for 10 minutes” or “wake me at 7:30”.'));
-  } else {
-    const g = el('div','cardgrid');
-    m.timers.forEach(t => g.appendChild(timerCard(t)));
-    box.appendChild(g);
-  }
+  /* timers — created by asking Lity, so no + button */
+  const t = modColumn(IC.timer, 'Timers & Alarms', m.timers.length);
+  if(!m.timers.length)
+    t.col.appendChild(el('div','empty','Nothing ticking.\nAsk Lity to “set a timer for 10 minutes” or “wake me at 7:30”.'));
+  else m.timers.forEach(x => t.col.appendChild(timerCard(x)));
+  box.appendChild(t.col);
 
-  sectHead(box, IC.cart, 'Shopping', m.shopping.length);
-  const nl = el('div','addrow newbox');
+  /* shopping */
+  const s = modColumn(IC.cart, 'Shopping', m.shopping.length, 'new list');
+  const nl = el('div','addrow'); nl.style.display = 'none';
   const nli = el('input'); nli.placeholder = 'New list name…';
-  const nlb = el('button', null, 'Create list');
+  const nlb = el('button', null, 'Create');
   nlb.onclick = async () => {
     if(!nli.value.trim()) return;
     try{ await api('/shopping', {title: nli.value}); loadModules(); }
     catch(e){ toast(e.message, true); }
   };
   nli.onkeydown = e => { if(e.key==='Enter') nlb.click(); };
-  nl.append(nli, nlb); box.appendChild(nl);
-  if(m.shopping.length){
-    const g = el('div','cardgrid');
-    m.shopping.forEach(l => g.appendChild(shoppingCard(l)));
-    box.appendChild(g);
-  }
+  nl.append(nli, nlb); s.col.appendChild(nl);
+  s.plus.onclick = () => {
+    const open = nl.style.display === 'none';
+    nl.style.display = open ? 'flex' : 'none';
+    if(open) nli.focus();
+  };
+  if(!m.shopping.length)
+    s.col.appendChild(el('div','empty','No lists yet.\nClick + or ask Lity to “add milk to my shopping list”.'));
+  else m.shopping.forEach(l => s.col.appendChild(shoppingCard(l)));
+  box.appendChild(s.col);
 
-  sectHead(box, IC.note, 'Notes', m.notes.length);
-  const nn = el('div','addrow newbox');
-  const nnb = el('button', null, '+ New note');
-  nn.appendChild(nnb); box.appendChild(nn);
-  const ng = el('div','cardgrid'); box.appendChild(ng);
-  nnb.onclick = () => {
+  /* notes */
+  const n = modColumn(IC.note, 'Notes', m.notes.length, 'new note');
+  const nEmpty = m.notes.length ? null
+      : el('div','empty','No notes yet.\nClick + to write one, or ask Lity to save something for you.');
+  n.plus.onclick = () => {
+    if(nEmpty) nEmpty.remove();
     const c = el('div','card');
     noteEditor(c, {id:null, title:'', content:''});
-    ng.prepend(c);
+    n.col.insertBefore(c, n.col.children[1] || null);
   };
-  m.notes.forEach(n => ng.appendChild(noteCard(n)));
+  if(nEmpty) n.col.appendChild(nEmpty);
+  else m.notes.forEach(x => n.col.appendChild(noteCard(x)));
+  box.appendChild(n.col);
   tickCountdowns();
 }
 
@@ -772,10 +851,219 @@ function memEditor(d, m){
   ta.focus();
 }
 
+/* ── config yaml -> form (structural parse, comments preserved, no hardcoded keys) ── */
+let cfgParsed = null;
+
+function cleanComment(raw){
+  // raw may start with '#'; strip it, then strip decorative dash/box-drawing borders
+  let t = raw.replace(/^#\s?/, '');
+  t = t.replace(/[─\-_]{3,}/g, '').trim();
+  return t;
+}
+function splitValueComment(rest){
+  if(rest==='') return {value:'', comment:''};
+  if(rest[0]==='"' || rest[0]==="'"){
+    const q = rest[0];
+    let j = rest.indexOf(q, 1);
+    if(j===-1) j = rest.length-1;
+    const value = rest.slice(0, j+1);
+    const remainder = rest.slice(j+1);
+    const hIdx = remainder.indexOf('#');
+    return {value, comment: hIdx>=0 ? remainder.slice(hIdx) : ''};
+  }
+  const hIdx = rest.indexOf('#');
+  if(hIdx>=0) return {value: rest.slice(0,hIdx).trim(), comment: rest.slice(hIdx)};
+  return {value: rest.trim(), comment: ''};
+}
+function parseConfigYaml(text){
+  const lines = text.split('\n');
+  const root = {key:null, indent:-1, children:[], leadingComment:'', trailingComment:'', inlineComment:''};
+  const stack = [root];
+  let pending = [];
+  let lastNode = null;
+  const fieldIndex = [];
+  for(let i=0;i<lines.length;i++){
+    const raw = lines[i];
+    const trimmed = raw.trim();
+    if(trimmed===''){ lastNode = null; continue; }
+    if(trimmed.startsWith('#')){
+      const txt = cleanComment(trimmed);
+      if(!txt) continue;
+      if(lastNode) lastNode.trailingComment = (lastNode.trailingComment ? lastNode.trailingComment+' ' : '') + txt;
+      else pending.push(txt);
+      continue;
+    }
+    const m = raw.match(/^(\s*)([A-Za-z0-9_.\-]+):(.*)$/);
+    if(!m){ lastNode = null; continue; }
+    const indent = m[1].length;
+    const key = m[2];
+    let rest = m[3];
+    if(rest.startsWith(' ')) rest = rest.slice(1);
+    const {value, comment} = splitValueComment(rest);
+    const inlineComment = cleanComment(comment);
+    while(stack.length>1 && stack[stack.length-1].indent >= indent) stack.pop();
+    const parent = stack[stack.length-1];
+    const node = {key, indent, value, inlineComment, trailingComment: inlineComment,
+                  leadingComment: pending.join(' '), children:[], lineIdx:i};
+    parent.children.push(node);
+    pending = [];
+    if(value===''){ stack.push(node); lastNode = null; }
+    else { lastNode = node; fieldIndex.push(node); }
+  }
+  return {root, fieldIndex, lines};
+}
+function stripQuotes(v){ return /^["']/.test(v) ? v.slice(1,-1) : v; }
+function parseListItems(v){
+  const inner = v.trim().replace(/^\[/,'').replace(/\]$/,'').trim();
+  if(!inner) return [];
+  return inner.split(',').map(s=>stripQuotes(s.trim())).filter(Boolean);
+}
+function inferType(value){
+  if(value==='true'||value==='false') return 'bool';
+  if(/^\[.*\]$/.test(value)) return 'list';
+  return 'string'; // numbers/plain text/quoted strings all edited as text, verbatim round-trip
+}
+function needsQuote(v){
+  if(v==='') return true;
+  if(/^[!&*#|>%@`"']/.test(v)) return true;
+  if(/^-(\s|$)/.test(v)) return true;
+  if(/:\s/.test(v) || /\s#/.test(v)) return true;
+  if(/^\s|\s$/.test(v)) return true;
+  if(/^(true|false|null|yes|no|on|off)$/i.test(v)) return true;
+  return false;
+}
+const ACRONYMS = {id:'ID',url:'URL',api:'API',ha:'HA',tts:'TTS',stt:'STT',ip:'IP',db:'DB',eou:'EOU',alsa:'ALSA',gcal:'GCal'};
+function humanize(key){
+  return key.split(/[_.]/).map(w => ACRONYMS[w.toLowerCase()] || (w.charAt(0).toUpperCase()+w.slice(1)))
+    .join(' ');
+}
+function fieldRow(node){
+  const row = el('div','field-row');
+  const type = inferType(node.value);
+  const hint = [node.leadingComment, node.trailingComment].filter(Boolean).join(' ');
+  if(type==='bool'){
+    const wrap = el('div','boolrow');
+    wrap.appendChild(el('label', null, humanize(node.key)));
+    const sw = document.createElement('label'); sw.className = 'switch';
+    const cb = document.createElement('input'); cb.type = 'checkbox';
+    cb.checked = node.value==='true'; cb.dataset.line = node.lineIdx; cb.dataset.type = 'bool';
+    sw.append(cb, el('span','slider'));
+    wrap.appendChild(sw);
+    row.appendChild(wrap);
+  } else {
+    row.appendChild(el('label', null, humanize(node.key)));
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.dataset.line = node.lineIdx;
+    if(type==='list'){
+      inp.dataset.type = 'list';
+      inp.value = parseListItems(node.value).join(', ');
+      inp.placeholder = 'comma-separated';
+    } else {
+      inp.dataset.type = 'string';
+      inp.dataset.wasQuoted = /^["']/.test(node.value) ? '1' : '0';
+      inp.dataset.quoteChar = /^["']/.test(node.value) ? node.value[0] : '"';
+      inp.value = stripQuotes(node.value);
+    }
+    row.appendChild(inp);
+  }
+  if(hint) row.appendChild(el('div','field-hint', hint));
+  return row;
+}
+function renderSection(node){
+  const sec = el('div','cfg-section');
+  sec.appendChild(el('div','sec-title', humanize(node.key)));
+  if(node.leadingComment) sec.appendChild(el('div','sec-hint', node.leadingComment));
+  const leaves = node.children.filter(c => c.children.length===0);
+  const subs = node.children.filter(c => c.children.length>0);
+  if(leaves.length){
+    const grid = el('div','field-grid');
+    leaves.forEach(n => grid.appendChild(fieldRow(n)));
+    sec.appendChild(grid);
+  }
+  subs.forEach(n => sec.appendChild(renderSection(n)));
+  return sec;
+}
+function renderConfigForm(yamlText){
+  cfgParsed = parseConfigYaml(yamlText);
+  const box = $('#cfg-form-view'); box.innerHTML = '';
+  const leaves = cfgParsed.root.children.filter(c => c.children.length===0);
+  const sections = cfgParsed.root.children.filter(c => c.children.length>0);
+  if(leaves.length){
+    const sec = el('div','cfg-section');
+    sec.appendChild(el('div','sec-title','General'));
+    const grid = el('div','field-grid');
+    leaves.forEach(n => grid.appendChild(fieldRow(n)));
+    sec.appendChild(grid);
+    box.appendChild(sec);
+  }
+  sections.forEach(n => box.appendChild(renderSection(n)));
+}
+function toYamlScalar(elIn){
+  const type = elIn.dataset.type;
+  if(type==='bool') return elIn.checked ? 'true' : 'false';
+  if(type==='list'){
+    const items = elIn.value.split(',').map(s=>s.trim()).filter(Boolean)
+      .map(s => needsQuote(s) ? '"'+s.replace(/"/g,'\\"')+'"' : s);
+    return '['+items.join(', ')+']';
+  }
+  const wasQuoted = elIn.dataset.wasQuoted==='1';
+  const qc = elIn.dataset.quoteChar || '"';
+  if(wasQuoted || needsQuote(elIn.value)){
+    const re = new RegExp(qc, 'g');
+    return qc + elIn.value.replace(re, '\\'+qc) + qc;
+  }
+  return elIn.value;
+}
+function patchLine(rawLine, node, newValue){
+  const indentStr = ' '.repeat(node.indent);
+  let out = `${indentStr}${node.key}: ${newValue}`;
+  if(node.inlineComment){
+    const hashCol = rawLine.indexOf('#');
+    const pad = hashCol > out.length ? hashCol - out.length : 2;
+    out += ' '.repeat(pad) + '# ' + node.inlineComment;
+  }
+  return out;
+}
+function rebuildYamlFromForm(){
+  if(!cfgParsed) return $('#cfg-ed').value;
+  const lines = cfgParsed.lines.slice();
+  cfgParsed.fieldIndex.forEach(node => {
+    const elIn = document.querySelector(`#cfg-form-view [data-line="${node.lineIdx}"]`);
+    if(!elIn) return;
+    const newVal = toYamlScalar(elIn);
+    if(newVal === node.value) return;
+    lines[node.lineIdx] = patchLine(lines[node.lineIdx], node, newVal);
+  });
+  return lines.join('\n');
+}
+async function saveConfigForm(){
+  try{
+    const yaml = rebuildYamlFromForm();
+    await api('/settings/config', {_method:'PUT', yaml});
+    $('#cfg-ed').value = yaml;
+    renderConfigForm(yaml);
+    toast('settings saved & applied');
+  }catch(e){ toast(e.message, true); }
+}
+function switchCfgView(v){
+  document.querySelectorAll('.cfg-subtabs button').forEach(x => x.classList.toggle('on', x.dataset.cfgview===v));
+  if(v==='raw'){
+    if(cfgParsed) $('#cfg-ed').value = rebuildYamlFromForm();
+    $('#cfg-form-view').style.display = 'none'; $('#cfg-form-save').style.display = 'none';
+    $('#cfg-raw-view').style.display = 'block';
+  } else {
+    renderConfigForm($('#cfg-ed').value);
+    $('#cfg-form-view').style.display = 'block'; $('#cfg-form-save').style.display = 'inline-block';
+    $('#cfg-raw-view').style.display = 'none';
+  }
+}
+document.querySelectorAll('.cfg-subtabs button').forEach(b => b.onclick = () => switchCfgView(b.dataset.cfgview));
+
 /* ── settings dashboard ── */
 async function loadSettings(){
   const s = await api('/settings');
   $('#cfg-ed').value = s.config_yaml;
+  renderConfigForm(s.config_yaml);
 
   const fp = $('#pane-files'); fp.innerHTML='';
   for(const [name, content] of Object.entries(s.files)){
@@ -822,6 +1110,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
 });
 async function saveConfig(){
   try{ await api('/settings/config', {_method:'PUT', yaml: $('#cfg-ed').value});
+       renderConfigForm($('#cfg-ed').value);
        toast('config saved & applied'); }catch(e){ toast(e.message, true); }
 }
 
