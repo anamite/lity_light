@@ -195,7 +195,8 @@ def create_app(core) -> FastAPI:
     @api.get("/api/memories")
     async def memories():
         return rows_to_dicts(await core.db.fetchall(
-            "SELECT * FROM memories WHERE archived=0 ORDER BY id DESC LIMIT 200"))
+            "SELECT id, kind, content, source_thread_id, archived, last_recalled_at, "
+            "recall_count, created_at FROM memories WHERE archived=0 ORDER BY id DESC LIMIT 200"))
 
     @api.post("/api/memories", status_code=201)
     async def create_memory(body: MemoryIn):
@@ -215,13 +216,15 @@ def create_app(core) -> FastAPI:
         if not row:
             raise HTTPException(404, "no such memory")
         await core.db.execute(
-            "UPDATE memories SET content=?, kind=? WHERE id=?",
-            (content, body.kind, memory_id))
+            "UPDATE memories SET content=?, kind=?, embedding=? WHERE id=?",
+            (content, body.kind, await core.embedder.blob(content), memory_id))
+        core.memory.invalidate_cache()
         return {"status": "ok"}
 
     @api.delete("/api/memories/{memory_id}")
     async def delete_memory(memory_id: int):
         await core.db.execute("UPDATE memories SET archived=1 WHERE id=?", (memory_id,))
+        core.memory.invalidate_cache()
         return {"status": "ok"}
 
     # ── modules dashboard: shopping · notes · timers/alarms ──────────────

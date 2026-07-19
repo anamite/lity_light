@@ -27,7 +27,7 @@ MCP services — its full 70+ tool set). There are no native sub-agents:
 │    2. USER.md                who the user is                    │
 │    3. Delegation policy      Hermes does ALL real work          │
 │    4. Task board             open tasks: id·state·age           │
-│    5. Injected memories      top-5 FTS hits, per turn           │
+│    5. Injected memories      hybrid FTS+vector hits, per turn   │
 │    6. Thread summary         rolling, updatable                 │
 │                                                                 │
 │  Window: last 20 messages verbatim; older → summary;            │
@@ -71,7 +71,8 @@ Lity_light/
 │   ├── kernel.py          # main-thread agent loop
 │   ├── context.py         # builds the budgeted kernel context
 │   ├── compactor.py       # summarization + tool-pair collapsing
-│   ├── memory.py          # parallel extraction + FTS5 recall
+│   ├── memory.py          # parallel extraction + hybrid FTS/vector recall
+│   ├── embeddings.py      # local model2vec embedder (optional, FTS fallback)
 │   ├── skills.py          # lesson distillation + LEARNED.md soul adaptation
 │   ├── approvals.py       # permission levels, approval queue, Hermes bridge
 │   ├── tools/             # the kernel's small tool registry (core.py, web.py)
@@ -110,7 +111,7 @@ drop-in — the `llm.py` provider is OpenAI-compatible, so pointing
 
 | Tool | Level | Purpose |
 |---|---|---|
-| `recall(query)` | 0 | Search memory (FTS5) |
+| `recall(query)` | 0 | Search memory (hybrid keyword + semantic) |
 | `remember(content, kind)` | 2 | Save a durable fact (user/project/feedback/reference) |
 | `delegate(task, context)` | 2 | Start a Hermes run in its own sub-thread; returns task id |
 | `task_status(task_id)` | 0 | Check / fetch result of a task |
@@ -223,10 +224,20 @@ retrieval is keyword FTS; skills are text, not executable procedures.
 ## 6. Memory (parallel)
 
 - **Write path (background, never blocks the reply):** after each exchange, the
-  utility model extracts candidate facts typed as `user | project | feedback |
-  reference`, dedupes against FTS, inserts into `memories` + `memories_fts`.
-- **Read path:** (a) automatic — top-5 FTS matches for the incoming user
-  message injected per turn; (b) explicit — the `recall` tool.
+  utility model (grounded by the thread summary) extracts candidate facts typed
+  as `user | project | feedback | reference`. A fact similar to a stored one
+  SUPERSEDES it (old row archived) so updated facts win; near-identical ones
+  are skipped. Every memory is stored with a local embedding vector.
+- **Read path (hybrid):** FTS5 keyword hits blended with cosine similarity from
+  a local model2vec static embedding model (`memory:` in config.yaml —
+  numpy-only inference, fast on a Pi, graceful FTS-only fallback), plus recency
+  and usage boosts. (a) automatic — top-k hits above
+  `kernel.memory_min_score` injected per turn; the recall query includes the
+  last few user messages so follow-ups still match; nothing is injected when
+  nothing is relevant. (b) explicit — the `recall` tool.
+- **USER.md refresh:** nightly, `user`-kind memories are merged into USER.md
+  (the always-loaded profile) by the utility model, so identity facts stop
+  depending on per-turn recall luck.
 - **MEMORY.md** is a human-readable export, so the memory store is
   inspectable/editable as a file, but SQLite is authoritative.
 
@@ -285,9 +296,11 @@ sets the next review or closes the goal.
   channel but stay visible in the UI) and the heartbeat rests. Environment
   alerts and schedules still fire — their output just lands silently.
 - **Nightly reflection** (`lity/reflect.py`, `reflection:` config): once per
-  night at a user-local time, two utility-model passes — (1) memory
+  night at a user-local time, utility-model passes — (1) memory
   consolidation: archive duplicates/superseded facts, write merged
-  replacements, re-export MEMORY.md; (2) day review: digest the last 24h
+  replacements, re-export MEMORY.md; (2) USER.md refresh: merge new
+  `user`-kind memories into the always-loaded profile; (3) day review:
+  digest the last 24h
   (messages, finished tasks, goals, new memories) and wake the kernel if
   anything deserves follow-up, which the kernel may turn into a goal, a
   schedule, a memory — or NO_REPLY. Last-run date persists in the `kv`

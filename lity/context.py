@@ -113,7 +113,10 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
         soul = f"{soul}\n\n{learned}"
     user_md = _read(ws / "USER.md", slot)
 
-    mems = await app.memory.recall(user_text, k=int(app.cfg.get_path("kernel.memory_inject_top_k", 5)))
+    mems = await app.memory.recall(
+        await _recall_query(app, thread_id, user_text),
+        k=int(app.cfg.get_path("kernel.memory_inject_top_k", 5)),
+        min_score=float(app.cfg.get_path("kernel.memory_min_score", 0.35)))
     mem_block = ""
     if mems:
         mem_block = "## Possibly relevant memories\n" + "\n".join(
@@ -137,6 +140,17 @@ async def build_system(app, thread_id: int, user_text: str) -> str:
     parts = [soul, user_md, clock, cal_block, DELEGATION_POLICY, tasks_block,
              goals_block, mem_block, summary_block]
     return "\n\n".join(p for p in parts if p)
+
+
+async def _recall_query(app, thread_id: int, user_text: str) -> str:
+    """Recall query = current message + the last couple of user messages, so
+    pronoun-heavy follow-ups ('what about that thing?') still hit the right
+    memories via the semantic side."""
+    rows = await app.db.fetchall(
+        "SELECT content FROM messages WHERE thread_id=? AND role='user' "
+        "ORDER BY id DESC LIMIT 3", (thread_id,))
+    prev = [r["content"][:300] for r in rows if r["content"].strip() != user_text.strip()]
+    return "\n".join(reversed(prev[:2]) if prev else []) + "\n" + user_text
 
 
 def _age_secs(secs: int) -> str:

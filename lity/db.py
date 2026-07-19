@@ -49,7 +49,10 @@ CREATE TABLE IF NOT EXISTS memories (
     kind TEXT NOT NULL DEFAULT 'project',      -- user | project | feedback | reference
     content TEXT NOT NULL,
     source_thread_id INTEGER,
+    embedding BLOB,                            -- float32 vector (local model2vec model)
     archived INTEGER NOT NULL DEFAULT 0,
+    last_recalled_at TEXT,                     -- usage stats: feed recall ranking
+    recall_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, content='memories', content_rowid='id');
@@ -197,6 +200,14 @@ class DB:
             await self.conn.execute("ALTER TABLE approvals ADD COLUMN run_id TEXT")
         except aiosqlite.OperationalError:
             pass
+        for ddl in (  # migration: memory embeddings + recall usage stats
+                "ALTER TABLE memories ADD COLUMN embedding BLOB",
+                "ALTER TABLE memories ADD COLUMN last_recalled_at TEXT",
+                "ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0"):
+            try:
+                await self.conn.execute(ddl)
+            except aiosqlite.OperationalError:
+                pass
         # backfill FTS for messages that predate the messages_fts table
         counts = await self.fetchone(
             "SELECT (SELECT COUNT(*) FROM messages) AS m, (SELECT COUNT(*) FROM messages_fts) AS f")

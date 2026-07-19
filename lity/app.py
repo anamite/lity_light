@@ -9,6 +9,7 @@ from .approvals import Approvals
 from .compactor import Compactor
 from .config import Config
 from .db import DB
+from .embeddings import Embedder
 from .gateway.events import EventBus
 from .kernel import Kernel
 from .llm import LLM
@@ -29,6 +30,7 @@ class App:
         self.bus = EventBus()
         self.db = DB(self.cfg.resolve("database", "./data/lity.db"))
         self.llm = LLM(self.cfg)
+        self.embedder = Embedder(self)
         self.memory = Memory(self)
         self.skills = Skills(self)
         self.compactor = Compactor(self)
@@ -46,6 +48,7 @@ class App:
         self._voice_task: asyncio.Task | None = None
         self._telegram_task: asyncio.Task | None = None
         self._env_task: asyncio.Task | None = None
+        self._embed_task: asyncio.Task | None = None
 
     async def start(self):
         tools.load_all()
@@ -55,6 +58,8 @@ class App:
         await self.db.execute(
             "UPDATE tasks SET status='failed', result='interrupted by server restart', "
             "finished_at=datetime('now') WHERE status IN ('queued','running','waiting_user')")
+        # loads the local embedding model + backfills memory vectors, off the boot path
+        self._embed_task = asyncio.create_task(self.embedder.warmup())
         await self.quick.start()  # restore pending timers/alarms, announce missed ones
         await self.voice.init_cursor()  # pre-boot history is never re-spoken
         self._scheduler_task = asyncio.create_task(self.scheduler.run())
@@ -77,6 +82,8 @@ class App:
             self._telegram_task.cancel()
         if self._env_task:
             self._env_task.cancel()
+        if self._embed_task:
+            self._embed_task.cancel()
         await self.quick.shutdown()
         await self.llm.close()
         await self.db.close()

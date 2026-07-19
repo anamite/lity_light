@@ -27,6 +27,12 @@ Return STRICT JSON, nothing else: {"archive": [ids], "merged": [{"kind": "...", 
   (kind: user | project | feedback | reference).
 Be conservative — when unsure, keep. Empty lists are a fine answer."""
 
+USER_SYSTEM = """You maintain USER.md — the always-loaded profile of an AI agent's user.
+Given the current USER.md and the accumulated 'user'-kind memories, write the new full USER.md:
+first line '# USER', then max 15 bullet lines of durable facts about the user (identity, role,
+preferences, context). Merge duplicates, keep existing lines unless contradicted, newest
+information wins, no speculation. Output only the file content."""
+
 REVIEW_SYSTEM = """You are the nightly reflection of a personal agent. Below is a digest of
 the last 24 hours. Reply with at most 4 short sentences: what mattered, anything unresolved
 worth following up, and at most ONE concrete suggestion (a goal to add, a routine to
@@ -69,17 +75,45 @@ class Reflection:
         await self.app.db.set_kv("reflection.last_date", today)
         log.info("nightly reflection running for %s", today)
         try:
+            await self._prune_stale()
+        except Exception:
+            log.exception("stale-memory pruning failed")
+        try:
             await self._consolidate()
         except Exception:
             log.exception("memory consolidation failed")
+        try:
+            await self._user_profile()
+        except Exception:
+            log.exception("user profile refresh failed")
         try:
             await self._day_review()
         except Exception:
             log.exception("day review failed")
 
+    async def _prune_stale(self):
+        """Archive project/reference memories older than 6 months that recall
+        never surfaced (recall_count is maintained by hybrid recall). Keeps the
+        active pool small so dead facts stop competing for injection slots.
+        user/feedback kinds are exempt — USER.md and LEARNED.md rebuild from
+        them. Archived, never deleted: everything stays in SQLite."""
+        rows = await self.app.db.fetchall(
+            "SELECT id FROM memories WHERE archived=0 AND kind IN ('project','reference') "
+            "AND recall_count=0 AND created_at < datetime('now','-180 days') LIMIT 200")
+        if not rows:
+            return
+        marks = ",".join("?" * len(rows))
+        await self.app.db.execute(
+            f"UPDATE memories SET archived=1 WHERE id IN ({marks})",
+            tuple(r["id"] for r in rows))
+        log.info("pruned %d stale never-recalled memories", len(rows))
+        self.app.memory.invalidate_cache()
+        await self.app.memory.export_md()
+
     async def _consolidate(self):
         rows = await self.app.db.fetchall(
-            "SELECT id, kind, content FROM memories WHERE archived=0 ORDER BY id LIMIT 150")
+            "SELECT id, kind, content FROM memories WHERE archived=0 "
+            "ORDER BY id DESC LIMIT 150")  # newest first — that's where duplicates accumulate
         if len(rows) < 8:
             return  # nothing worth a model call yet
         listing = "\n".join(f"{r['id']} | {r['kind']} | {r['content'][:200]}" for r in rows)
@@ -102,7 +136,35 @@ class Reflection:
         if archive or merged:
             log.info("reflection: archived %d memories, wrote %d merged",
                      len(archive), len(merged))
+            self.app.memory.invalidate_cache()
             await self.app.memory.export_md()
+
+    async def _user_profile(self):
+        """Regenerate USER.md (always-loaded profile) from 'user'-kind memories,
+        so durable identity facts stop depending on per-turn recall. Only runs
+        when the last day actually produced new user facts."""
+        db = self.app.db
+        fresh = await db.fetchone(
+            "SELECT COUNT(*) AS c FROM memories WHERE kind='user' AND archived=0 "
+            "AND created_at >= datetime('now','-1 day')")
+        if not fresh["c"]:
+            return
+        rows = await db.fetchall(
+            "SELECT content FROM memories WHERE kind='user' AND archived=0 "
+            "ORDER BY id DESC LIMIT 60")
+        path = self.app.cfg.workspace / "USER.md"
+        try:
+            current = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            current = ""
+        prompt = (f"CURRENT USER.md:\n{current or '(empty)'}\n\n"
+                  "USER MEMORIES (newest first):\n"
+                  + "\n".join(f"- {r['content'][:200]}" for r in rows))
+        out = await self.app.llm.complete(
+            self.app.cfg.get_path("models.utility"), USER_SYSTEM, prompt, max_tokens=400)
+        if out and out.strip():
+            path.write_text(out.strip() + "\n", encoding="utf-8")
+            log.info("USER.md regenerated from %d user memories", len(rows))
 
     async def _day_review(self):
         db = self.app.db

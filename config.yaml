@@ -36,6 +36,7 @@ kernel:
   compact_after_messages: 26   # compaction trigger (keeps last keep_recent verbatim)
   keep_recent: 10
   memory_inject_top_k: 5
+  memory_min_score: 0.35       # relevance floor — weaker recall hits are not injected
   max_tool_iterations: 8
   system_char_budget: 6400     # ~1.6k tokens across all system slots
   vision_max_images: 2         # newest N attached images embedded into context
@@ -43,6 +44,16 @@ kernel:
 skills:
   enabled: true                # distill reusable lessons after delegated tasks
   inject_top_k: 2
+
+memory:
+  # Long-term memory recall is HYBRID: FTS5 keywords + local semantic
+  # embeddings (model2vec static model — numpy-only inference, fast even on a
+  # Pi). The model is downloaded from HuggingFace on first start and cached;
+  # if model2vec is missing or the download fails, recall silently falls back
+  # to FTS-only. Changing the model wipes + re-embeds all vectors on restart.
+  embeddings: true
+  embed_model: minishlab/potion-retrieval-32M   # best retrieval quality (~130 MB RAM);
+                               # low-RAM Pi: minishlab/potion-base-8M (~30 MB)
 
 autonomy_level: 2              # tool levels <= this run without asking; 4 always asks
 approval_timeout_seconds: 600  # a timed-out (or denied) approval STOPS the task
