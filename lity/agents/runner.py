@@ -140,6 +140,10 @@ class Runner:
                 await db.add_message(thread_id, "assistant", final)
                 bus.emit("message.created", thread_id=thread_id, role="assistant", content=final)
             result = await self._compress(final or "(no result)")
+            if tokens:
+                await db.execute(
+                    "INSERT INTO llm_usage(model, purpose, total_tokens) "
+                    "VALUES ('hermes-executor','task',?)", (tokens,))
             await db.execute(
                 "UPDATE tasks SET status='done', result=?, tokens_used=?, finished_at=datetime('now') WHERE id=?",
                 (result, tokens, task_id))

@@ -87,10 +87,17 @@ def create_app(core) -> FastAPI:
         return {"id": tid}
 
     @api.get("/api/threads/{thread_id}/messages")
-    async def messages(thread_id: int, limit: int = 200):
-        rows = await core.db.fetchall(
-            "SELECT * FROM messages WHERE thread_id=? ORDER BY id DESC LIMIT ?",
-            (thread_id, limit))
+    async def messages(thread_id: int, limit: int = 200, before: int = 0):
+        """Newest-first page of `limit` messages; `before` (a message id)
+        pages further back so the UI only loads what's scrolled to."""
+        if before:
+            rows = await core.db.fetchall(
+                "SELECT * FROM messages WHERE thread_id=? AND id<? ORDER BY id DESC LIMIT ?",
+                (thread_id, before, limit))
+        else:
+            rows = await core.db.fetchall(
+                "SELECT * FROM messages WHERE thread_id=? ORDER BY id DESC LIMIT ?",
+                (thread_id, limit))
         return list(reversed(rows_to_dicts(rows)))
 
     @api.post("/api/threads/{thread_id}/messages", status_code=202)
@@ -317,6 +324,56 @@ def create_app(core) -> FastAPI:
     async def schedules():
         return rows_to_dicts(await core.db.fetchall(
             "SELECT * FROM schedules ORDER BY enabled DESC, next_run"))
+
+    # ── advanced dashboard: token usage · background processes · live log ─
+    # Fetched lazily — only when the Advanced settings tab is opened.
+    @api.get("/api/advanced")
+    async def advanced():
+        await core.db.execute(  # rolling 30-day retention for usage stats
+            "DELETE FROM llm_usage WHERE created_at < datetime('now','-30 days')")
+        daily = rows_to_dicts(await core.db.fetchall(
+            "SELECT date(created_at) AS bucket, model, COUNT(*) AS calls, "
+            "SUM(prompt_tokens) AS prompt, SUM(completion_tokens) AS completion, "
+            "SUM(total_tokens) AS total FROM llm_usage "
+            "GROUP BY bucket, model ORDER BY bucket"))
+        hourly = rows_to_dicts(await core.db.fetchall(
+            "SELECT strftime('%Y-%m-%d %H:00', created_at) AS bucket, model, "
+            "COUNT(*) AS calls, SUM(total_tokens) AS total FROM llm_usage "
+            "WHERE created_at >= datetime('now','-48 hours') "
+            "GROUP BY bucket, model ORDER BY bucket"))
+        models = rows_to_dicts(await core.db.fetchall(
+            "SELECT model, purpose, COUNT(*) AS calls, "
+            "SUM(prompt_tokens) AS prompt, SUM(completion_tokens) AS completion, "
+            "SUM(total_tokens) AS total FROM llm_usage "
+            "GROUP BY model, purpose ORDER BY total DESC"))
+        active = rows_to_dicts(await core.db.fetchall(
+            "SELECT * FROM tasks WHERE status IN ('queued','running','waiting_user','blocked') "
+            "ORDER BY id DESC"))
+        for t in active:  # progress = the task thread's latest event line
+            row = await core.db.fetchone(
+                "SELECT content, created_at FROM messages WHERE thread_id=? AND role='event' "
+                "ORDER BY id DESC LIMIT 1", (t["thread_id"],))
+            t["last_activity"] = row["content"] if row else None
+            t["last_activity_at"] = row["created_at"] if row else None
+        recent = rows_to_dicts(await core.db.fetchall(
+            "SELECT id, agent, status, task, tokens_used, created_at, finished_at "
+            "FROM tasks WHERE status IN ('done','failed','cancelled') "
+            "ORDER BY id DESC LIMIT 10"))
+        scheds = rows_to_dicts(await core.db.fetchall(
+            "SELECT * FROM schedules ORDER BY enabled DESC, next_run"))
+        timers = rows_to_dicts(await core.db.fetchall(
+            "SELECT id, kind, label, fires_at, status FROM qtimers "
+            "WHERE status IN ('pending','ringing') ORDER BY fires_at"))
+        return {"now": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                "usage": {"daily": daily, "hourly": hourly, "models": models},
+                "tasks_active": active, "tasks_recent": recent,
+                "schedules": scheds, "timers": timers}
+
+    @api.get("/api/logs")
+    async def logs(since: int = 0):
+        entries = core.logbuf.since(since)
+        return {"entries": entries,
+                "last": entries[-1]["id"] if entries else since}
 
     # ── OpenAI-compatible voice front door ───────────────────────────────
     # POST /v1/chat/completions: any STT→LLM→TTS pipeline can use Lity as its

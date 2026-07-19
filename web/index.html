@@ -288,6 +288,55 @@
   .lvl.l3,.lvl.l4{color:var(--warn);background:rgba(232,185,94,.12)}
   .direct{color:var(--ok);font:700 10.5px var(--font-mono);text-transform:uppercase;letter-spacing:.4px}
 
+  /* ── lazy loading: older messages · more tasks ── */
+  .older{align-self:center;background:var(--panel2);border:1px solid var(--line);
+         border-radius:20px;color:var(--dim);cursor:pointer;padding:6px 18px;
+         font:600 11.5px var(--font-ui);transition:all .15s;flex-shrink:0}
+  .older:hover{color:var(--text-hi);border-color:var(--accent-dim)}
+  .taskmore{margin:8px 4px 0;padding:6px 10px;text-align:center;color:var(--dim2);
+            cursor:pointer;font:600 10.5px var(--font-mono);text-transform:uppercase;
+            letter-spacing:.6px;border-radius:8px;transition:all .12s}
+  .taskmore:hover{color:var(--text);background:var(--panel2)}
+
+  /* ── advanced tab ── */
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+            gap:12px;margin-bottom:18px}
+  .statcard{background:var(--panel);border:1px solid var(--line-soft);
+            border-radius:var(--radius-lg);padding:13px 15px;box-shadow:var(--shadow-sm)}
+  .statcard .k{font:700 10px var(--font-mono);text-transform:uppercase;
+               letter-spacing:.8px;color:var(--dim)}
+  .statcard .v{font:700 22px/1.3 var(--font-mono);color:var(--text-hi);letter-spacing:.5px}
+  .statcard .s{font:500 10.5px var(--font-ui);color:var(--dim2)}
+  #adv-chart-wrap{background:var(--panel);border:1px solid var(--line-soft);
+       border-radius:var(--radius-lg);padding:14px 16px 8px;margin-bottom:8px}
+  #adv-chart{width:100%;display:block}
+  #adv-legend{display:flex;gap:14px;flex-wrap:wrap;padding:8px 2px 4px;
+              font:600 11px var(--font-ui);color:var(--dim)}
+  #adv-legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;
+                  margin-right:5px;vertical-align:-1px}
+  .bgproc{background:var(--panel);border:1px solid var(--line-soft);
+          border-radius:var(--radius);padding:11px 14px;margin-bottom:8px}
+  .bgproc .row1{display:flex;align-items:center;gap:10px;font-size:13px}
+  .bgproc .row1 b{font-family:var(--font-mono);font-size:12px;color:var(--text-hi)}
+  .bgproc .act{font:11px var(--font-mono);color:var(--dim);margin-top:5px;
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bgproc .meta{font:500 10.5px var(--font-mono);color:var(--dim2);margin-left:auto;
+                flex-shrink:0}
+  #logwin{background:#050505;border:1px solid var(--line);border-radius:var(--radius);
+          height:280px;overflow-y:auto;padding:10px 12px;font:11px/1.65 var(--font-mono);
+          margin-bottom:20px}
+  .logline{white-space:pre-wrap;word-break:break-all;color:var(--dim)}
+  .logline .lts{color:var(--dim2)}
+  .logline.lv-warning{color:var(--warn)} .logline.lv-error,.logline.lv-critical{color:var(--bad)}
+  .logline.lv-event{color:var(--accent-hi)}
+  .advtable{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:18px;
+            border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .advtable td,.advtable th{padding:7px 11px;border-bottom:1px solid var(--line-soft);text-align:left}
+  .advtable th{color:var(--dim);background:var(--panel2);font-size:10px;
+               text-transform:uppercase;letter-spacing:.6px}
+  .advtable td.num{font-family:var(--font-mono);text-align:right}
+  .advtable td b{font-family:var(--font-mono);color:var(--text-hi);font-size:11.5px}
+
   /* ── config form (dynamic, parsed from yaml) ── */
   .cfg-subtabs{display:flex;gap:4px;margin-bottom:14px}
   .cfg-subtabs button{padding:6px 14px;border-radius:7px;border:1px solid var(--line);
@@ -356,6 +405,7 @@
       <button data-pane="files">Identity files</button>
       <button data-pane="skills">Skills</button>
       <button data-pane="tools">Tools</button>
+      <button data-pane="advanced">Advanced</button>
     </div>
     <div class="pane on" id="pane-config">
       <p class="hint">config.yaml — models, budgets, autonomy level, heartbeat. Applied
@@ -375,6 +425,25 @@
     <div class="pane" id="pane-files"></div>
     <div class="pane" id="pane-skills"></div>
     <div class="pane" id="pane-tools"></div>
+    <div class="pane" id="pane-advanced">
+      <p class="hint">Internal diagnostics: token usage per model (kept 30 days, older
+      data is dropped automatically), background processes and a live log window.
+      Loaded only while this tab is open.</p>
+      <div class="statgrid" id="adv-stats"></div>
+      <h3>Token usage</h3>
+      <div class="cfg-subtabs" id="adv-range">
+        <button data-range="hourly" class="on">Last 48 h</button>
+        <button data-range="daily">Last 30 days</button>
+      </div>
+      <div id="adv-chart-wrap"><canvas id="adv-chart" height="190"></canvas>
+        <div id="adv-legend"></div></div>
+      <div id="adv-models"></div>
+      <h3>Background processes</h3>
+      <div id="adv-bg"><p class="hint">loading…</p></div>
+      <h3>Live log</h3>
+      <p class="hint">Recent server log lines and internal events — streams while this tab is open.</p>
+      <div id="logwin"></div>
+    </div>
   </div>
   <div id="composer">
     <button id="attach" title="send a file">
@@ -442,21 +511,51 @@ async function openThread(id){
   $('#input').disabled = readonly; $('#send').disabled = readonly;
   $('#input').placeholder = readonly ? 'Agent thread — read-only'
       : 'Message Lity… (Enter to send, Shift+Enter for newline)';
-  const msgs = await api(`/threads/${id}/messages`);
+  // lazy history: only the last few messages load up front; "show older"
+  // pages back 30 at a time so long threads stay cheap
+  const msgs = await api(`/threads/${id}/messages?limit=3`);
   const log = $('#log'); log.innerHTML = '';
+  oldestMsgId = msgs.length ? msgs[0].id : null;
+  if(msgs.length >= 3) log.appendChild(olderBtn());
   msgs.forEach(m => log.appendChild(msgEl(m)));
   await renderPendingApprovals();  // pending approvals survive reloads & thread switches
   loadThreads(); loadTasks(); scroll();
 }
+let oldestMsgId = null;
+function olderBtn(){
+  const b = el('button','older','Show older messages');
+  b.id = 'older'; b.onclick = loadOlder;
+  return b;
+}
+async function loadOlder(){
+  if(!oldestMsgId) return;
+  const btn = $('#older');
+  const msgs = await api(`/threads/${current}/messages?limit=30&before=${oldestMsgId}`);
+  const log = $('#log');
+  const prevH = log.scrollHeight, prevTop = log.scrollTop;
+  const anchor = btn.nextSibling;
+  msgs.forEach(m => log.insertBefore(msgEl(m), anchor));
+  if(msgs.length) oldestMsgId = msgs[0].id;
+  if(msgs.length < 30) btn.remove();
+  log.scrollTop = prevTop + (log.scrollHeight - prevH);  // keep the view anchored
+}
+let tasksExpanded = false;
 async function loadTasks(){
   const tasks = await api('/tasks');
   const box = $('#tasks'); box.innerHTML = '';
-  for(const t of tasks.slice(0,30)){
+  const shown = tasksExpanded ? tasks.slice(0,30) : tasks.slice(0,6);
+  for(const t of shown){
     const d = document.createElement('div');
     d.className = 'task' + (t.thread_id===current?' active':'');
     d.innerHTML = `<b>#${t.id} ${t.agent}</b> <span class="st-${t.status}">${t.status}</span><br>${t.task.slice(0,60)}`;
     d.onclick = () => openThread(t.thread_id);
     box.appendChild(d);
+  }
+  if(tasks.length > 6){
+    const m = el('div','taskmore',
+        tasksExpanded ? 'show less' : `show ${Math.min(tasks.length,30)-6} more`);
+    m.onclick = () => { tasksExpanded = !tasksExpanded; loadTasks(); };
+    box.appendChild(m);
   }
 }
 function approvalCard(ev){
@@ -497,7 +596,7 @@ function connect(){
       hideTyping(ev);
     }
     else if(ev.type==='thread.created'){ loadThreads(); }
-    else if(ev.type==='task.updated'){ loadTasks(); }
+    else if(ev.type==='task.updated'){ loadTasks(); if(advOpen()) loadAdvBackground(); }
     else if(ev.type==='timer.updated'){ if(view==='modules') loadModules(); }
     else if(ev.type==='memory.created'){ if(view==='memory') loadMemory(); }
     else if(ev.type==='approval.requested'){
@@ -559,6 +658,7 @@ function showView(v){
   if(v==='modules') loadModules();
   if(v==='memory') loadMemory();
   if(v==='settings') loadSettings();
+  if(v!=='settings') stopLogPoll();
   if(chat) scroll();
 }
 document.querySelectorAll('.navbtn').forEach(b => b.onclick = () => {
@@ -1107,11 +1207,192 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('on'));
   document.querySelectorAll('.pane').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); $('#pane-'+b.dataset.pane).classList.add('on');
+  // advanced data is pulled only when the tab is actually opened
+  if(b.dataset.pane==='advanced'){ loadAdvanced(); startLogPoll(); }
+  else stopLogPoll();
 });
 async function saveConfig(){
   try{ await api('/settings/config', {_method:'PUT', yaml: $('#cfg-ed').value});
        renderConfigForm($('#cfg-ed').value);
        toast('config saved & applied'); }catch(e){ toast(e.message, true); }
+}
+
+/* ── advanced tab: token usage · background processes · live log ── */
+const PALETTE = ['#5e7f94','#8a86a8','#4ade80','#c98a4b','#c9564f','#6aa9a9','#a89a5e'];
+let advUsage = null, advRange = 'hourly';
+const advOpen = () => view==='settings' && $('#pane-advanced').classList.contains('on');
+const fmtNum = n => n>=1e6 ? (n/1e6).toFixed(1)+'M' : n>=1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
+
+async function loadAdvanced(){
+  try{
+    const d = await api('/advanced');
+    advUsage = d.usage;
+    renderAdvStats(d);
+    renderAdvModels(d.usage.models);
+    drawUsageChart();
+    renderAdvBg(d);
+  }catch(e){ toast('advanced load failed: '+e.message, true); }
+}
+async function loadAdvBackground(){
+  try{ const d = await api('/advanced'); renderAdvBg(d); renderAdvStats(d); }catch(e){}
+}
+
+function renderAdvStats(d){
+  const ms = d.usage.models;
+  const total = ms.reduce((a,m)=>a+(m.total||0),0);
+  const calls = ms.reduce((a,m)=>a+(m.calls||0),0);
+  const today = d.now.slice(0,10);
+  const todayTok = d.usage.daily.filter(r=>r.bucket===today).reduce((a,r)=>a+(r.total||0),0);
+  const box = $('#adv-stats'); box.innerHTML = '';
+  for(const [k,v,s] of [
+      ['Tokens · 30 days', fmtNum(total), calls+' LLM calls'],
+      ['Tokens · today', fmtNum(todayTok), 'UTC day'],
+      ['Active tasks', String(d.tasks_active.length), d.tasks_recent.length+' recently finished'],
+      ['Schedules', String(d.schedules.filter(s=>s.enabled).length)+' on',
+       d.timers.length+' timers pending']]){
+    const c = el('div','statcard');
+    c.appendChild(el('div','k',k)); c.appendChild(el('div','v',v)); c.appendChild(el('div','s',s));
+    box.appendChild(c);
+  }
+}
+
+function renderAdvModels(models){
+  if(!models.length){ $('#adv-models').innerHTML =
+    '<p class="hint">(no usage recorded yet — data accumulates as Lity talks to models)</p>'; return; }
+  $('#adv-models').innerHTML =
+    '<table class="advtable"><tr><th>model</th><th>purpose</th><th style="text-align:right">calls</th>'+
+    '<th style="text-align:right">prompt</th><th style="text-align:right">completion</th>'+
+    '<th style="text-align:right">total</th></tr>'+
+    models.map(m=>`<tr><td><b>${m.model}</b></td><td>${m.purpose||'—'}</td>`+
+      `<td class="num">${m.calls}</td><td class="num">${fmtNum(m.prompt||0)}</td>`+
+      `<td class="num">${fmtNum(m.completion||0)}</td><td class="num">${fmtNum(m.total||0)}</td></tr>`).join('')+
+    '</table>';
+}
+
+function advBuckets(){
+  const keys = [];
+  if(advRange==='daily')
+    for(let i=29;i>=0;i--) keys.push(new Date(Date.now()-i*864e5).toISOString().slice(0,10));
+  else
+    for(let i=47;i>=0;i--) keys.push(new Date(Date.now()-i*36e5).toISOString().slice(0,13).replace('T',' ')+':00');
+  return keys;
+}
+function drawUsageChart(){
+  if(!advUsage) return;
+  const rows = advRange==='daily' ? advUsage.daily : advUsage.hourly;
+  const keys = advBuckets();
+  const models = [...new Set(rows.map(r=>r.model))];
+  const data = {};   // key -> model -> tokens
+  keys.forEach(k => data[k] = {});
+  rows.forEach(r => { if(data[r.bucket]) data[r.bucket][r.model] = r.total||0; });
+  const cv = $('#adv-chart'), dpr = window.devicePixelRatio||1;
+  const W = cv.clientWidth || cv.parentElement.clientWidth-32, H = 190;
+  cv.width = W*dpr; cv.height = H*dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,W,H);
+  const padL = 44, padB = 22, padT = 8;
+  const max = Math.max(1, ...keys.map(k => models.reduce((a,m)=>a+(data[k][m]||0),0)));
+  const css = getComputedStyle(document.documentElement);
+  ctx.font = '10px '+css.getPropertyValue('--font-mono');
+  // y grid: 0 · half · max
+  for(const f of [0,.5,1]){
+    const y = padT + (H-padT-padB)*(1-f);
+    ctx.strokeStyle = css.getPropertyValue('--line-soft'); ctx.beginPath();
+    ctx.moveTo(padL,y); ctx.lineTo(W,y); ctx.stroke();
+    ctx.fillStyle = css.getPropertyValue('--dim2');
+    ctx.textAlign='right'; ctx.fillText(fmtNum(Math.round(max*f)), padL-6, y+3);
+  }
+  const bw = (W-padL)/keys.length;
+  keys.forEach((k,i) => {
+    let y = H-padB;
+    models.forEach((m,mi) => {
+      const v = data[k][m]||0; if(!v) return;
+      const h = (H-padT-padB)*v/max;
+      ctx.fillStyle = PALETTE[mi%PALETTE.length];
+      ctx.fillRect(padL+i*bw+1, y-h, Math.max(1,bw-2), h);
+      y -= h;
+    });
+    const every = advRange==='daily' ? 5 : 8;
+    if(i%every===0){
+      ctx.fillStyle = css.getPropertyValue('--dim2'); ctx.textAlign='center';
+      ctx.fillText(advRange==='daily' ? k.slice(5) : k.slice(11), padL+i*bw+bw/2, H-6);
+    }
+  });
+  $('#adv-legend').innerHTML = models.length
+    ? models.map((m,i)=>`<span><span class="sw" style="background:${PALETTE[i%PALETTE.length]}"></span>${m}</span>`).join('')
+    : '<span>(no data in this window yet)</span>';
+}
+document.querySelectorAll('#adv-range button').forEach(b => b.onclick = () => {
+  advRange = b.dataset.range;
+  document.querySelectorAll('#adv-range button').forEach(x=>x.classList.toggle('on', x===b));
+  drawUsageChart();
+});
+
+function bgRow(title, statusCls, statusText, sub, meta){
+  const d = el('div','bgproc');
+  const r = el('div','row1');
+  r.appendChild(el('b',null,title));
+  if(statusText) r.appendChild(el('span', statusCls?'st-'+statusCls:'tsub', statusText));
+  if(meta) r.appendChild(el('span','meta', meta));
+  d.appendChild(r);
+  if(sub) d.appendChild(el('div','act', sub));
+  return d;
+}
+function renderAdvBg(d){
+  const box = $('#adv-bg'); box.innerHTML = '';
+  if(!d.tasks_active.length)
+    box.appendChild(el('p','hint','No background tasks running right now.'));
+  for(const t of d.tasks_active){
+    const row = bgRow(`#${t.id} ${t.agent}`, t.status, t.status,
+        (t.last_activity ? '⋯ '+t.last_activity : t.task.slice(0,120)),
+        'started '+String(t.created_at||'').slice(5,16)+' UTC');
+    if(t.last_activity) row.appendChild(el('div','act','task: '+t.task.slice(0,120)));
+    row.style.cursor='pointer'; row.onclick = () => openThread(t.thread_id);
+    box.appendChild(row);
+  }
+  if(d.schedules.length){
+    box.appendChild(el('p','hint','Schedules (crons & reminders):'));
+    for(const s of d.schedules)
+      box.appendChild(bgRow(s.kind+' · '+s.spec, s.enabled?'done':'', s.enabled?'on':'off',
+          s.prompt.slice(0,120),
+          (s.next_run ? 'next '+String(s.next_run).slice(5,16) : 'no next run')));
+  }
+  for(const t of d.timers)
+    box.appendChild(bgRow(t.kind+(t.label?' · '+t.label:''),
+        t.status==='ringing'?'running':'', t.status,
+        null, 'fires '+String(t.fires_at).slice(5,16)+' UTC'));
+  if(d.tasks_recent.length){
+    box.appendChild(el('p','hint','Recently finished:'));
+    for(const t of d.tasks_recent)
+      box.appendChild(bgRow(`#${t.id} ${t.agent}`, t.status, t.status, t.task.slice(0,120),
+          (t.tokens_used?fmtNum(t.tokens_used)+' tok · ':'')+
+          'ended '+String(t.finished_at||'').slice(5,16)+' UTC'));
+  }
+}
+
+/* live log window — polls only while the advanced tab is open */
+let logTimer = null, logLast = 0;
+function startLogPoll(){
+  if(logTimer) return;
+  logLast = 0; $('#logwin').innerHTML = '';
+  pollLogs(); logTimer = setInterval(pollLogs, 2500);
+}
+function stopLogPoll(){ if(logTimer){ clearInterval(logTimer); logTimer = null; } }
+async function pollLogs(){
+  if(!advOpen()){ stopLogPoll(); return; }
+  try{
+    const r = await api('/logs?since='+logLast);
+    logLast = r.last;
+    const win = $('#logwin');
+    const stick = win.scrollTop + win.clientHeight >= win.scrollHeight - 30;
+    for(const e of r.entries){
+      const d = el('div','logline lv-'+e.level.toLowerCase());
+      d.innerHTML = `<span class="lts">${e.ts}</span> ${e.level} <span class="lts">${e.source}</span> — `;
+      d.appendChild(document.createTextNode(e.message));
+      win.appendChild(d);
+    }
+    while(win.children.length > 600) win.removeChild(win.firstChild);
+    if(r.entries.length && stick) win.scrollTop = win.scrollHeight;
+  }catch(e){}
 }
 
 loadThreads().then(()=>openThread(1)); loadTasks(); connect();

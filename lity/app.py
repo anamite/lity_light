@@ -11,8 +11,10 @@ from .config import Config
 from .db import DB
 from .embeddings import Embedder
 from .gateway.events import EventBus
+from .db import dumps
 from .kernel import Kernel
 from .llm import LLM
+from . import logbuf
 from .memory import Memory
 from .modules.env import Environment
 from .modules.gcal import GoogleCalendar
@@ -28,8 +30,17 @@ class App:
     def __init__(self, config_path: str = "config.yaml"):
         self.cfg = Config.load(config_path)
         self.bus = EventBus()
+        self.logbuf = logbuf.LogBuffer()
+        logbuf.attach(self.logbuf)
+        # tap the event bus so bus traffic shows up in the live-log window too
+        _orig_emit = self.bus.emit
+        def _emit(type_, **payload):
+            self.logbuf.add("EVENT", type_, dumps(payload)[:220])
+            _orig_emit(type_, **payload)
+        self.bus.emit = _emit
         self.db = DB(self.cfg.resolve("database", "./data/lity.db"))
         self.llm = LLM(self.cfg)
+        self.llm.on_usage = self._record_llm_usage
         self.embedder = Embedder(self)
         self.memory = Memory(self)
         self.skills = Skills(self)
@@ -50,9 +61,20 @@ class App:
         self._env_task: asyncio.Task | None = None
         self._embed_task: asyncio.Task | None = None
 
+    async def _record_llm_usage(self, model: str, purpose: str, usage: dict):
+        await self.db.execute(
+            "INSERT INTO llm_usage(model, purpose, prompt_tokens, completion_tokens, total_tokens) "
+            "VALUES (?,?,?,?,?)",
+            (model, purpose or "", int(usage.get("prompt_tokens", 0) or 0),
+             int(usage.get("completion_tokens", 0) or 0),
+             int(usage.get("total_tokens", 0) or 0)))
+
     async def start(self):
         tools.load_all()
         await self.db.init()
+        # usage accounting is kept 30 days, then dropped (internal stats only)
+        await self.db.execute(
+            "DELETE FROM llm_usage WHERE created_at < datetime('now','-30 days')")
         await self.approvals.load()
         # tasks that were mid-flight when the process died can never finish — say so
         await self.db.execute(

@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "lity",
-      "runtimeExecutable": ".venv\\Scripts\\python.exe",
-      "runtimeArgs": ["-m", "lity"],
+      "runtimeExecutable": "C:\\Program Files\\FreeCAD 1.0\\bin\\python.exe",
+      "runtimeArgs": ["-m", "lity", "--no-voice"],
       "port": 8321
     }
   ]

@@ -70,7 +70,7 @@ class Kernel:
             for _ in range(int(cfg.get_path("kernel.max_tool_iterations", 8))):
                 try:
                     msg, usage = await self.app.llm.chat(
-                        model, messages, tools=tools, max_tokens=1024)
+                        model, messages, tools=tools, max_tokens=1024, purpose="kernel")
                 except Exception as e:
                     final_text = f"(I hit an error talking to the model: {e})"
                     break
